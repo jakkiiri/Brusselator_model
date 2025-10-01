@@ -1,0 +1,112 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{array}
+\usepackage{booktabs}
+
+\title{\textbf{Comparing Numerical Methods with Neural Networks in Solving Non-linear Autocatalytic ODEs}}
+
+\author{
+June Kim \quad Jacky Li \quad Junhee Park \quad Brian Ye \\
+1011280604 \quad 1011271678 \quad 1011120984 \quad 1010834493
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-0.5cm}
+
+\section{Introduction and Motivation}
+\vspace{-0.2cm}
+
+Autocatalytic reactions reuse the product of a process as a reactant to create more product, and are modelled by non-linear ordinary differential equations \cite{pekar2021, msmali2019}. These autocatalytic differential equations are common in numerous engineering and scientific phenomena. For example, they depict chain reactions such as the Belousov–Zhabotinsky oscillator \cite{zhabotinsky2007} in the field of chemistry, where product feedback sustains and amplifies the process. In biology, autocatalytic dynamics appear in models of enzyme kinetics and self-replicating molecules \cite{paul2002, wu2009}, which are fundamental to understanding processes like DNA replication or the spread of pathogens. Similar feedback relations are observed in ecology, where individuals of a population encourage more growth through collaboration with one another. Examining these relations are critical in many engineering processes.
+
+\section{Objectives}
+\vspace{-0.2cm}
+
+While some autocatalytic equations are analytically solvable, this is untrue for most equations of this kind due to the non-linear structure, which forces us to rely on approximation techniques. Our objective is to investigate two main methods: The classical numerical methods and the more modern method of training a neural network. The Brusselator model \cite{mcdowell2008} depicting chemical oscillations will be used as the standard for comparing the two methods and is represented by the following: 
+\begin{align}
+\frac{dx}{dt} &= A + x^2y - (B+1)x \\
+\frac{dy}{dt} &= Bx - x^2y
+\end{align}
+Hence, the high-level objective is to obtain insight in the limitations of numerical solvers for solving non-linear autocatalytic systems and confirm the potential of machine learning by comparing the results of the two solutions.
+\section{Mathematical Background}
+\vspace{-0.2cm}
+
+As mentioned in the introduction, non-linearity in autocatalytic reactions stems from saturation effects and product to reactant feedback loops. This relates to logistic-type dynamics but with stronger feedback; hence, it is not possible to provide an analytical solution due to the nonlinear feedback. This motivates finding a numerical approximation of the solution using classical methods, such as Euler's and other step-size solvers. However, solutions can exhibit stiff behavior, which makes them numerically unstable or inaccurate; consequently, numerical approximations like Euler's method must be taken at miniscule time steps to mitigate rapid changes in certain regions \cite{stiff2022} which can be computationally heavy. This prompts the alternative implementation of a Physics-Informed Neural Network (PINN), which parametrizes the derivative function with a neural network and trains to fit trajectories. This approach has the advantage of learning smoother approximations over large time intervals.
+
+\section{Proposed Approach}
+\vspace{-0.2cm}
+
+Once the parameters and initial conditions of the autocatalytic ODE - the Brusselator differential equation involving limit cycles and bifurcations - is defined, different numerical solvers, such as Euler and RK4, will be implemented to compare accuracy and stability. Once numerical approaches are sufficiently exhausted, an attempt will be made to train neural networks. The PINN architecture \cite{cuomo2022} is a promising choice for this task because it does not require ground truth labels of the solutions, which allows the network to be trained unsupervised. Lastly, an extensive performance comparison will be made between the numerical methods and the neural network to provide insight into error, computational loss, and robustness, allowing us to determine the more effective method.
+
+\section{Expected Outcomes}
+\vspace{-0.2cm}
+
+The result of the comparison is expected to highlight both the strengths and limitations of numerical methods and PINNs. Whether the discrete approximation inherent to numerical methods poses a significant drawback, or whether the PINNS recent assessments \cite{sophiya2025} of difficulty in training stability and loss weighting is apparent will be examined in detail. Two critical outcomes include (1) the difference in computational efficiency, and (2) the trade-off between the interpretability of numerical approaches and the flexibility of neural networks. These insights will depict the 'better' method of solving autocatalytic ODEs, thus aiding the depiction of real-world phenomena.
+
+\section{Timeline}
+\vspace{-0.2cm}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\centering\arraybackslash}p{1.2cm} p{5.5cm} p{5.5cm}}
+\toprule
+\textbf{Weeks} & \textbf{Tasks} & \textbf{Expected Completion} \\
+\midrule
+1–2 & Survey literature on autocatalytic ODEs. Review numerical methods (Euler, Runge–Kutta, implicit solvers). Study applications of PINNs. & Explored References. Refined problem statement and objectives. \\
+\midrule
+3–4 & Implement classical solvers (explicit/implicit Runge–Kutta, finite difference). Run test cases for stability and convergence. Validate with analytical solutions where possible. & Working numerical solver code. Baseline performance results (accuracy, error, runtime). \\
+\midrule
+5–6 & Design and implement PINN architecture (loss, trial solution, autodiff). Train PINN on ODE cases. Tune hyperparameters for stability. & Functioning PINN implementation. Preliminary solution results compared to baseline. \\
+\midrule
+7–8 & Compare numerical vs PINN solvers (accuracy, efficiency, robustness). Conduct sensitivity analysis (step size, network size). Identify strengths/weaknesses of each approach. & Comparative plots and tables (error curves, computational cost). Draft discussion of trade-offs. \\
+\midrule
+9–10 & Compile methods, results, and analysis into report. Revise based on feedback. Finalize figures, references, and appendices. & Final written report ready for submission. Organized code and supplementary materials archived. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\newpage
+
+\bibliographystyle{unsrt}
+\begin{thebibliography}{9}
+
+\bibitem{pekar2021}
+M. Pekař, ``Non-Equilibrium Thermodynamics View on Kinetics of Autocatalytic Reactions—Two Illustrative Examples,'' \textit{Molecules}, vol. 26, no. 3, p. 585, Jan. 2021.
+
+\bibitem{msmali2019}
+A. H. Msmali, M. I. Nelson, and M. P. Edwards, ``Quadratic autocatalysis with non-linear decay. II: the effect of incomplete mixing,'' \textit{SN Applied Sciences}, vol. 1, no. 9, Aug. 2019.
+
+\bibitem{zhabotinsky2007}
+A. Zhabotinsky, ``Belousov-Zhabotinsky reaction,'' \textit{Scholarpedia}, vol. 2, no. 9, p. 1435, 2007.
+
+\bibitem{paul2002}
+N. Paul and G. F. Joyce, ``A self-replicating ligase ribozyme,'' \textit{Proceedings of the National Academy of Sciences}, vol. 99, no. 20, pp. 12733–12740, Sep. 2002.
+
+\bibitem{wu2009}
+M. Wu and P. G. Higgs, ``Origin of Self-Replicating Biopolymers: Autocatalytic Feedback Can Jump-Start the RNA World,'' \textit{Journal of Molecular Evolution}, vol. 69, no. 5, pp. 541–554, Sep. 2009.
+
+\bibitem{mcdowell2008}
+M. Mcdowell, ``Mathematical Modeling of the Brusselator,'' 2008. Available: \url{https://www3.nd.edu/~powers/mcdowell.pdf}
+
+\bibitem{stiff2022}
+``Stiff equation,'' \textit{Wikipedia}, Mar. 09, 2022. \url{https://en.wikipedia.org/wiki/Stiff_equation}
+
+\bibitem{cuomo2022}
+S. Cuomo, V. S. di Cola, F. Giampaolo, G. Rozza, M. Raissi, and F. Piccialli, ``Scientific Machine Learning through Physics-Informed Neural Networks: Where we are and What's next,'' arXiv:2201.05624 [physics], Jun. 2022.
+
+\bibitem{sophiya2025}
+Ajithkumar Sophiya, Afila; Nair, Akarsh K; Maleki, Sepehr; Krishnababu, Senthil K, ``A comprehensive analysis of PINNs: Variants, Applications, and Challenges,'' \textit{arXiv e-prints}, p. arXiv:2505.22761, May 2025.
+
+\end{thebibliography}
+
+\end{document}
