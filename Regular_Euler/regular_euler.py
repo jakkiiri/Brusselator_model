@@ -1,7 +1,6 @@
 import numpy as np
 import argparse
-
-# regular_euler.py
+import time
 import matplotlib.pyplot as plt
 
 def brusselator_rhs(x, y, A, B):
@@ -9,17 +8,26 @@ def brusselator_rhs(x, y, A, B):
     dydt = B * x - x * x * y
     return dxdt, dydt
 
-def brusselator_euler(A, B, x0, y0, dt, T):
+def brusselator_euler(A, B, x0, y0, dt, T, record_step_times=False):
     n_steps = int(np.ceil(T / dt))
     t = np.linspace(0.0, n_steps * dt, n_steps + 1)
     x = np.empty(n_steps + 1)
     y = np.empty(n_steps + 1)
     x[0], y[0] = x0, y0
+
+    step_times = np.empty(n_steps) if record_step_times else None
+
     for k in range(n_steps):
+        t0 = time.perf_counter()
         dxdt, dydt = brusselator_rhs(x[k], y[k], A, B)
         x[k + 1] = x[k] + dt * dxdt
         y[k + 1] = y[k] + dt * dydt
-    return t, x, y
+        if record_step_times:
+            step_times[k] = time.perf_counter() - t0
+
+    if record_step_times:
+        return t, x, y, step_times
+    return t, x, y, None
 
 def run_demo():
     parser = argparse.ArgumentParser(description="Explicit (regular) Euler method for the Brusselator model.")
@@ -30,15 +38,31 @@ def run_demo():
     parser.add_argument("--T", type=float, default=20.0, help="Final time")
     parser.add_argument("--dts", type=str, default="0.1,0.05,0.01,0.005",
                         help="Comma separated list of time steps to test")
+    parser.add_argument("--record-step-times", action="store_true",
+                        help="Record and print each individual step time (may be a lot of output)")
     parser.add_argument("--no-show", action="store_true", help="Skip interactive show (just save figure)")
     parser.add_argument("--outfile", type=str, default="brusselator_euler.png", help="Output plot filename")
     args = parser.parse_args()
 
     dts = [float(s) for s in args.dts.split(",")]
 
+    print("Timing results:")
     plt.figure(figsize=(8, 5))
     for dt in dts:
-        t, x, y = brusselator_euler(args.A, args.B, args.x0, args.y0, dt, args.T)
+        start = time.perf_counter()
+        t, x, y, step_times = brusselator_euler(
+            args.A, args.B, args.x0, args.y0, dt, args.T,
+            record_step_times=args.record_step_times
+        )
+        total_elapsed = time.perf_counter() - start
+        n_steps = len(t) - 1
+        per_step = total_elapsed / n_steps
+        print(f"dt={dt} steps={n_steps} total={total_elapsed:.6f}s per_step={per_step:.6e}s")
+
+        if args.record_step_times:
+            # Print a short summary (avoid dumping huge arrays)
+            print(f"  step_times: min={step_times.min():.3e}s max={step_times.max():.3e}s mean={step_times.mean():.3e}s")
+
         plt.plot(t, x, label=f"x dt={dt}")
         plt.plot(t, y, linestyle="--", label=f"y dt={dt}")
 
