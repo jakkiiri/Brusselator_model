@@ -1,62 +1,100 @@
 import numpy as np
+import argparse
+import time
 import matplotlib.pyplot as plt
 
-# Define the differential equations for the Brusselator model
-def brusselator(t, X, A, B):
-    x, y = X
-    dxdt = A + x**2 * y - (B + 1) * x
-    dydt = B * x - x**2 * y
-    return np.array([dxdt, dydt])
+# Equation Definition
+def brusselator_rhs(x, y, A, B):
+    dxdt = A + x * x * y - (B + 1.0) * x
+    dydt = B * x - x * x * y
+    return dxdt, dydt
 
 # RK4 Method
-def rk4(f, t0, tf, X0, h, *args):
-    t = np.arange(t0, tf, h)
-    X = np.zeros((len(t), len(X0)))
-    X[0] = X0
-    
-    for i in range(1, len(t)):
-        k1 = f(t[i-1], X[i-1], *args)
-        k2 = f(t[i-1] + 0.5*h, X[i-1] + 0.5*h*k1, *args)
-        k3 = f(t[i-1] + 0.5*h, X[i-1] + 0.5*h*k2, *args)
-        k4 = f(t[i], X[i-1] + h*k3, *args)
-        
-        X[i] = X[i-1] + (h/6)*(k1 + 2*k2 + 2*k3 + k4)
-    
-    return t, X
+def brusselator_rk4(A, B, x0, y0, dt, T, record_step_times=False):
+    n_steps = int(np.ceil(T / dt))  # Time Steps to Cover [0, T]
+    t = np.linspace(0.0, n_steps * dt, n_steps + 1)  # Time Array
+    # Empty Solution Arrays for x and y
+    x = np.empty(n_steps + 1)
+    y = np.empty(n_steps + 1)
+    # Set Initial Conditions
+    x[0], y[0] = x0, y0
 
-# Parameters for the Brusselator model
-A = 1.0
-B = 3.0
-X0 = [1.0, 2.0]  # Initial conditions: x(0) = 1, y(0) = 2
-t0 = 0
-tf = 100
-h = 0.1  # Step size
+    # Array to Record Step Times
+    step_times = np.empty(n_steps) if record_step_times else None
 
-# Solve using RK4
-t, X = rk4(brusselator, t0, tf, X0, h, A, B)
+    # RK4 Loop
+    for k in range(n_steps):
+        # Timer to Record Step Time
+        t0 = time.perf_counter()
+        # k1
+        dx1, dy1 = brusselator_rhs(x[k], y[k], A, B)
+        # k2
+        dx2, dy2 = brusselator_rhs(x[k] + 0.5 * dt * dx1, y[k] + 0.5 * dt * dy1, A, B)
+        # k3
+        dx3, dy3 = brusselator_rhs(x[k] + 0.5 * dt * dx2, y[k] + 0.5 * dt * dy2, A, B)
+        # k4
+        dx4, dy4 = brusselator_rhs(x[k] + dt * dx3, y[k] + dt * dy3, A, B)
+        # Update
+        x[k + 1] = x[k] + (dt / 6.0) * (dx1 + 2 * dx2 + 2 * dx3 + dx4)
+        y[k + 1] = y[k] + (dt / 6.0) * (dy1 + 2 * dy2 + 2 * dy3 + dy4)
+        # Record Step Time
+        if record_step_times:
+            step_times[k] = time.perf_counter() - t0
 
-# Extract x and y from the solution
-x = X[:, 0]
-y = X[:, 1]
+    if record_step_times:
+        return t, x, y, step_times
+    return t, x, y, None
 
-# Plot the results
-plt.figure(figsize=(10,6))
+def run_demo():
+    # Parser to Handle Plot Arguments
+    parser = argparse.ArgumentParser(description="RK4 method for the Brusselator model.")
+    parser.add_argument("--A", type=float, default=1.0, help="Parameter A")
+    parser.add_argument("--B", type=float, default=3.0, help="Parameter B")
+    parser.add_argument("--x0", type=float, default=1.2, help="Initial x")
+    parser.add_argument("--y0", type=float, default=2.5, help="Initial y")
+    parser.add_argument("--T", type=float, default=20.0, help="Final time")
+    parser.add_argument("--dts", type=str, default="0.1,0.05,0.01,0.005",
+                        help="Comma separated list of time steps to test")
+    parser.add_argument("--record-step-times", action="store_true",
+                        help="Record and print each individual step time (may be a lot of output)")
+    parser.add_argument("--no-show", action="store_true", help="Skip interactive show (just save figure)")
+    parser.add_argument("--outfile", type=str, default="brusselator_rk4.png", help="Output plot filename")
+    args = parser.parse_args()
 
-# Plot x(t) and y(t)
-plt.subplot(2, 1, 1)
-plt.plot(t, x, label='x(t)')
-plt.plot(t, y, label='y(t)')
-plt.xlabel('Time t')
-plt.ylabel('Concentrations x and y')
-plt.title('Concentrations of x and y vs Time')
-plt.legend()
+    dts = [float(s) for s in args.dts.split(",")]
 
-# Plot the phase plane
-plt.subplot(2, 1, 2)
-plt.plot(x, y)
-plt.xlabel('x')
-plt.ylabel('y')
-plt.title('Phase Plane: x vs y')
+    print("Timing results:")
+    plt.figure(figsize=(8, 5))
+    # Compute the Computation Time
+    for dt in dts:
+        start = time.perf_counter()
+        t, x, y, step_times = brusselator_rk4(
+            args.A, args.B, args.x0, args.y0, dt, args.T,
+            record_step_times=args.record_step_times
+        )
+        # Total Elapsed Time
+        total_elapsed = time.perf_counter() - start
+        n_steps = len(t) - 1
+        per_step = total_elapsed / n_steps
+        print(f"dt={dt} steps={n_steps} total={total_elapsed:.6f}s per_step={per_step:.6e}s")
 
-plt.tight_layout()
-plt.show()
+        if args.record_step_times:
+            # Print a short summary 
+            print(f"  step_times: min={step_times.min():.3e}s max={step_times.max():.3e}s mean={step_times.mean():.3e}s")
+
+        plt.plot(t, x, label=f"x dt={dt}")
+        plt.plot(t, y, linestyle="--", label=f"y dt={dt}")
+
+    # Plotting
+    plt.xlabel("t")
+    plt.ylabel("x(t), y(t)")
+    plt.title(f"Brusselator RK4 integration (A={args.A}, B={args.B})")
+    plt.legend(fontsize="small", ncol=2)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(args.outfile, dpi=150)
+    if not args.no_show:
+        plt.show()
+
+if __name__ == "__main__":
+    run_demo()
