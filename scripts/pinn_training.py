@@ -6,11 +6,8 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import time
 
-
+# Brusselator RHS
 def brusselator_rhs(x, y, A, B):
-    """
-    Brusselator model equations
-    """
     dxdt = A + x * x * y - (B + 1.0) * x
     dydt = B * x - x * x * y
     return dxdt, dydt
@@ -18,7 +15,7 @@ def brusselator_rhs(x, y, A, B):
 
 # PINN Class
 class PINN(nn.Module):   
-    def __init__(self, hidden_layers=[64, 64, 64], activation=nn.Tanh()):
+    def __init__(self, hidden_layers=[32, 32, 32, 32], activation=nn.Tanh()):
         super(PINN, self).__init__()
         
         # Input layer: time t
@@ -36,19 +33,21 @@ class PINN(nn.Module):
         
         self.network = nn.Sequential(*layers)
         
-        # Initialize weights using Xavier initialization
+        # Initialize weights with smaller values for stability
         self.init_weights()
     
     def init_weights(self):
-        # Initialize network weights using Xavier initialization
+        # Initialize network weights using Xavier initialization with smaller values
         for m in self.network.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
+                nn.init.xavier_normal_(m.weight, gain=0.5)
                 nn.init.constant_(m.bias, 0.0)
     
     def forward(self, t):
         # Forward pass
-        return self.network(t)
+        out = self.network(t)
+        # Add small offset to keep values positive (Brusselator concentrations)
+        return out + 0.1
 
 
 # BrusselatorPINN Class
@@ -64,8 +63,8 @@ class BrusselatorPINN:
         self.t_max = t_max
         self.device = torch.device(device)
         
-        # Create model
-        self.model = PINN(hidden_layers=[64, 64, 64, 64]).to(self.device)
+        # Create model with smaller architecture for stability
+        self.model = PINN(hidden_layers=[32, 32, 32, 32]).to(self.device)
         
         # Loss history
         self.loss_history = {
@@ -77,26 +76,32 @@ class BrusselatorPINN:
     
     def physics_loss(self, t_collocation):
         # Compute physics loss (PDE residuals)
-        t_collocation.requires_grad_(True)
+        # Clone and enable gradients for this computation
+        t = t_collocation.clone().detach().requires_grad_(True)
         
         # Forward pass
-        xy = self.model(t_collocation)
+        xy = self.model(t)
         x = xy[:, 0:1]
         y = xy[:, 1:2]
         
         # Compute derivatives using automatic differentiation
-        dxy_dt = torch.autograd.grad(
-            outputs=xy,
-            inputs=t_collocation,
-            grad_outputs=torch.ones_like(xy),
+        # Need to compute gradients for each output separately
+        dx_dt = torch.autograd.grad(
+            outputs=x,
+            inputs=t,
+            grad_outputs=torch.ones_like(x),
             create_graph=True,
             retain_graph=True
         )[0]
         
-        dx_dt = dxy_dt[:, 0:1]
-        dy_dt = dxy_dt[:, 1:2]
+        dy_dt = torch.autograd.grad(
+            outputs=y,
+            inputs=t,
+            grad_outputs=torch.ones_like(y),
+            create_graph=True
+        )[0]
         
-        # Brusselator equations
+        # Brusselator equations residuals
         f_x = dx_dt - (self.A + x * x * y - (self.B + 1.0) * x)
         f_y = dy_dt - (self.B * x - x * x * y)
         
@@ -139,7 +144,7 @@ class BrusselatorPINN:
         t_collocation = torch.linspace(
             self.t_min, self.t_max, n_collocation, 
             device=self.device
-        ).view(-1, 1).requires_grad_(True)
+        ).view(-1, 1)
         
         # Convert data to tensors if provided
         if t_data is not None:
@@ -147,10 +152,10 @@ class BrusselatorPINN:
             x_data = torch.tensor(x_data, dtype=torch.float32, device=self.device).view(-1, 1)
             y_data = torch.tensor(y_data, dtype=torch.float32, device=self.device).view(-1, 1)
         
-        # Optimizer
+        # Optimizer with gradient clipping
         optimizer = Adam(self.model.parameters(), lr=learning_rate)
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, 
-                                      patience=500, verbose=True)
+                                      patience=500)
         
         # Training loop
         print("Starting training...")
@@ -169,11 +174,28 @@ class BrusselatorPINN:
             loss_ic = self.initial_condition_loss()
             loss_dat = self.data_loss(t_data, x_data, y_data)
             
+            # Check for NaN with detailed debugging
+            if torch.isnan(loss_phys) or torch.isnan(loss_ic):
+                print(f"Warning: NaN detected at epoch {epoch+1}")
+                print(f"  Physics Loss: {loss_phys.item()}")
+                print(f"  IC Loss: {loss_ic.item()}")
+                if epoch == 0:
+                    # Check model outputs on first failure
+                    with torch.no_grad():
+                        test_out = self.model(t_collocation[:5])
+                        print(f"  Sample model outputs: {test_out}")
+                print("Stopping training.")
+                break
+            
             # Total loss
             loss = lambda_physics * loss_phys + lambda_ic * loss_ic + lambda_data * loss_dat
             
             # Backward pass
             loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
             optimizer.step()
             scheduler.step(loss)
             
@@ -186,11 +208,13 @@ class BrusselatorPINN:
             # Print progress
             if (epoch + 1) % print_every == 0:
                 elapsed = time.time() - start_time
+                current_lr = optimizer.param_groups[0]['lr']
                 print(f"Epoch {epoch+1}/{n_epochs} | "
                       f"Loss: {loss.item():.6e} | "
                       f"Physics: {loss_phys.item():.6e} | "
                       f"IC: {loss_ic.item():.6e} | "
                       f"Data: {loss_dat.item():.6e} | "
+                      f"LR: {current_lr:.2e} | "
                       f"Time: {elapsed:.2f}s")
             
             # Plot intermediate results
@@ -337,11 +361,11 @@ def main():
     
     # Train the model
     pinn.train(
-        n_collocation=2000,
-        n_epochs=15000,
-        learning_rate=1e-3,
+        n_collocation=1000,
+        n_epochs=20000,
+        learning_rate=5e-4,  # Lower learning rate for stability
         lambda_physics=1.0,
-        lambda_ic=100.0,
+        lambda_ic=10.0,  # Reduced from 100.0 for better balance
         lambda_data=0.0,  # Set to 1.0 if using data
         t_data=None,  # Pass t_data if using
         x_data=None,  # Pass x_data if using
