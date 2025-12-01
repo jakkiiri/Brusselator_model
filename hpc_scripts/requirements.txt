@@ -1,0 +1,15 @@
+# Brusselator PINN Training Requirements
+
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Plotting and Visualization
+matplotlib>=3.7.0
+
+
+
