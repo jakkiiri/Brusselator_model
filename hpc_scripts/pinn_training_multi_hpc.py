@@ -4,8 +4,8 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for HPC
 import matplotlib.pyplot as plt
-from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim import Adam, AdamW
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingWarmRestarts
 import time
 import os
 import json
@@ -401,7 +401,8 @@ class MultiParamBrusselatorPINN:
               learning_rate=5e-4, lambda_physics=1.0, lambda_ic=100.0,
               lambda_data=10.0, n_data_points=100,
               print_every=100, patience=500, batch_size=50, data_batch_size=5000,
-              n_params_per_epoch=100):
+              n_params_per_epoch=100, scheduler_type='cosine_warm_restarts',
+              warmup_epochs=500, T_0=1000, T_mult=2):
         """
         Train the model on multiple parameter sets with validation
         
@@ -410,6 +411,10 @@ class MultiParamBrusselatorPINN:
         data_batch_size: number of data points to process at once in data loss (prevents GPU OOM)
         n_params_per_epoch: number of parameter sets to randomly sample per training epoch
                            (smaller = less memory, more epochs needed for convergence)
+        scheduler_type: 'cosine_warm_restarts' (recommended) or 'reduce_on_plateau'
+        warmup_epochs: number of epochs for learning rate warmup (linear increase)
+        T_0: initial restart period for cosine annealing (epochs between restarts)
+        T_mult: multiplier for restart period after each restart (2 = doubling)
         """
         print("=" * 80)
         print("MULTI-PARAMETER BRUSSELATOR PINN TRAINING")
@@ -435,6 +440,21 @@ class MultiParamBrusselatorPINN:
         print(f"  Batch size (param sets): {batch_size}")
         print(f"  Batch size (data points): {data_batch_size}")
         print(f"  Early stopping patience: {patience} epochs")
+        print(f"\nLearning Rate Schedule:")
+        print(f"  Scheduler type: {scheduler_type}")
+        print(f"  Warmup epochs: {warmup_epochs}")
+        if scheduler_type == 'cosine_warm_restarts':
+            print(f"  Cosine T_0 (first restart): {T_0} epochs")
+            print(f"  Cosine T_mult (period multiplier): {T_mult}")
+            # Calculate restart epochs
+            restarts = []
+            current = T_0
+            total = T_0
+            for i in range(5):  # Show first 5 restarts
+                restarts.append(total)
+                current *= T_mult
+                total += current
+            print(f"  Planned restarts at epochs: {restarts}")
         print("=" * 80)
         
         # Generate training data
@@ -458,9 +478,26 @@ class MultiParamBrusselatorPINN:
         ).view(-1, 1)
         
         # Optimizer with weight decay for regularization
-        optimizer = Adam(self.model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.7, 
-                                      patience=200, min_lr=1e-6)
+        # Using AdamW for better weight decay handling
+        optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-5, betas=(0.9, 0.999))
+        
+        # Learning rate scheduler selection
+        if scheduler_type == 'cosine_warm_restarts':
+            # Cosine Annealing with Warm Restarts - helps escape local minima
+            # T_0: first restart period, T_mult: multiplier for subsequent periods
+            # Example: T_0=1000, T_mult=2 → restarts at epoch 1000, 3000, 7000, 15000...
+            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=T_0, T_mult=T_mult, eta_min=1e-6)
+            print(f"  Scheduler: Cosine Annealing with Warm Restarts (T_0={T_0}, T_mult={T_mult})")
+            print(f"  Restart schedule: {T_0}, {T_0*(1+T_mult)}, {T_0*(1+T_mult+T_mult**2)}...")
+        else:
+            # Fallback to ReduceLROnPlateau
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.7, 
+                                          patience=200, min_lr=1e-6)
+            print(f"  Scheduler: ReduceLROnPlateau (factor=0.7, patience=200)")
+        
+        # Warmup settings
+        if warmup_epochs > 0:
+            print(f"  Learning rate warmup: {warmup_epochs} epochs")
         
         # Check initial GPU memory if CUDA is available
         if torch.cuda.is_available() and self.device.type == 'cuda':
@@ -480,8 +517,15 @@ class MultiParamBrusselatorPINN:
         print("=" * 80)
         
         start_time = time.time()
+        base_lr = learning_rate  # Store for warmup calculation
         
         for epoch in range(n_epochs):
+            # Learning rate warmup (linear increase from 0.1*lr to lr)
+            if warmup_epochs > 0 and epoch < warmup_epochs:
+                warmup_factor = 0.1 + 0.9 * (epoch / warmup_epochs)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = base_lr * warmup_factor
+            
             # Training mode
             self.model.train()
             optimizer.zero_grad()
@@ -588,8 +632,12 @@ class MultiParamBrusselatorPINN:
                         lambda_physics, lambda_ic, lambda_data, batch_size, data_batch_size
                     )
             
-            # Update learning rate based on validation loss
-            scheduler.step(loss_val)
+            # Update learning rate scheduler (only after warmup)
+            if epoch >= warmup_epochs:
+                if scheduler_type == 'cosine_warm_restarts':
+                    scheduler.step()  # Epoch-based stepping for cosine annealing
+                else:
+                    scheduler.step(loss_val)  # Loss-based stepping for ReduceLROnPlateau
             
             # Store history
             self.loss_history['train_total'].append(loss_train.item())
@@ -980,6 +1028,11 @@ def main():
         N_PARAMS_PER_EPOCH = config.N_PARAMS_PER_EPOCH
         N_EVAL_TRAIN = config.N_EVAL_TRAIN
         N_EVAL_VAL = config.N_EVAL_VAL
+        # Scheduler parameters
+        SCHEDULER_TYPE = getattr(config, 'SCHEDULER_TYPE', 'cosine_warm_restarts')
+        WARMUP_EPOCHS = getattr(config, 'WARMUP_EPOCHS', 500)
+        COSINE_T_0 = getattr(config, 'COSINE_T_0', 1000)
+        COSINE_T_MULT = getattr(config, 'COSINE_T_MULT', 2)
     except ImportError:
         print("config.py not found, using default configuration")
         # Default configuration
@@ -1009,6 +1062,11 @@ def main():
         N_PARAMS_PER_EPOCH = 100
         N_EVAL_TRAIN = 100
         N_EVAL_VAL = 100
+        # Scheduler parameters
+        SCHEDULER_TYPE = 'cosine_warm_restarts'
+        WARMUP_EPOCHS = 500
+        COSINE_T_0 = 1000
+        COSINE_T_MULT = 2
     
     # Configuration
     n_train_sets = N_TRAIN_SETS
@@ -1080,7 +1138,11 @@ def main():
         patience=PATIENCE,
         batch_size=BATCH_SIZE,
         data_batch_size=DATA_BATCH_SIZE,
-        n_params_per_epoch=N_PARAMS_PER_EPOCH
+        n_params_per_epoch=N_PARAMS_PER_EPOCH,
+        scheduler_type=SCHEDULER_TYPE,
+        warmup_epochs=WARMUP_EPOCHS,
+        T_0=COSINE_T_0,
+        T_mult=COSINE_T_MULT
     )
     
     # Evaluate on training and validation sets (sample for speed)

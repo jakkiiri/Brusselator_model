@@ -75,9 +75,24 @@ LAMBDA_IC = 100.0       # Weight for initial condition loss
 LAMBDA_DATA = 50.0      # Weight for data matching loss 
 
 # Learning rate scheduler
-LR_SCHEDULER_FACTOR = 0.5      # Multiply LR by this when loss plateaus (was 0.7)
-LR_SCHEDULER_PATIENCE = 1000   # Epochs to wait before reducing LR (was 200 - too aggressive!)
-LR_MIN = 1e-5                  # Minimum learning rate (was 1e-6 - too low!)
+# Options: 'cosine_warm_restarts' (RECOMMENDED - helps escape local minima)
+#          'reduce_on_plateau' (original - decays LR when loss plateaus)
+SCHEDULER_TYPE = 'cosine_warm_restarts'
+
+# Cosine Annealing with Warm Restarts parameters (only used if SCHEDULER_TYPE='cosine_warm_restarts')
+# The LR follows a cosine curve, periodically "restarting" to help escape local minima
+# Restart schedule: T_0, T_0*(1+T_mult), T_0*(1+T_mult+T_mult^2), ...
+# Example with T_0=1000, T_mult=2: restarts at epoch 1000, 3000, 7000, 15000...
+COSINE_T_0 = 1000        # First restart period (epochs)
+COSINE_T_MULT = 2        # Multiplier for subsequent restart periods
+
+# Learning rate warmup (linear increase from 10% to 100% of LR)
+WARMUP_EPOCHS = 500      # Number of warmup epochs (helps stabilize early training)
+
+# ReduceLROnPlateau parameters (only used if SCHEDULER_TYPE='reduce_on_plateau')
+LR_SCHEDULER_FACTOR = 0.5      # Multiply LR by this when loss plateaus
+LR_SCHEDULER_PATIENCE = 1000   # Epochs to wait before reducing LR
+LR_MIN = 1e-5                  # Minimum learning rate
 
 # Gradient clipping
 GRAD_CLIP_NORM = 1.0    # Maximum gradient norm (prevents exploding gradients)
