@@ -1,2 +1,1 @@
-This branch implements both Euler and Improved Euler Method for solving the Brusselator model.
-The code and example solutions of each method are in their respective folders
+This branch implements a simple gui in streamlit used to aid in timing and computation analysis of the four proposed methods of solving the Brusselator ODE.
