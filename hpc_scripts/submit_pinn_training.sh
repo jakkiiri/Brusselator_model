@@ -1,14 +1,17 @@
 #!/bin/bash
 
 #SBATCH --job-name=brusselator_pinn
-#SBATCH --time=48:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:h100:1
 #SBATCH --output=logs/pinn_training_%j.out
 #SBATCH --error=logs/pinn_training_%j.err
+#SBATCH --signal=B:TERM@120
+# ^^^ CRITICAL: Send SIGTERM 120 seconds before wall time limit
+# This gives the script time to save checkpoints before being killed
 
 # Note: Both stdout and stderr are written to the same .err file for easy monitoring
 # To monitor training progress in real-time:
@@ -28,8 +31,8 @@ echo "=========================================="
 
 # Create necessary directories
 mkdir -p logs
-mkdir -p outputs
-mkdir -p outputs/plots
+mkdir -p pinn_outputs
+mkdir -p pinn_outputs/plots
 
 # Set environment variables
 export CUDA_VISIBLE_DEVICES=0
@@ -94,22 +97,22 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo ""
     echo "Output Information:"
     
-    if [ -f "outputs/brusselator_pinn_model.pth" ]; then
-        echo "  Model saved: $(ls -lh outputs/brusselator_pinn_model.pth | awk '{print $5}')"
+    if [ -f "pinn_outputs/brusselator_pinn_best_model.pth" ]; then
+        echo "  Best model saved: $(ls -lh pinn_outputs/brusselator_pinn_best_model.pth | awk '{print $5}')"
     fi
     
-    if [ -f "outputs/training_summary.json" ]; then
+    if [ -f "pinn_outputs/training_summary.json" ]; then
         echo "  Training summary:"
-        cat outputs/training_summary.json
+        cat pinn_outputs/training_summary.json
     fi
     
-    if [ -d "outputs/plots" ]; then
-        echo "  Generated plots: $(ls -1 outputs/plots/*.png 2>/dev/null | wc -l) files"
-        ls -lh outputs/plots/
+    if [ -d "pinn_outputs/plots" ]; then
+        echo "  Generated plots: $(ls -1 pinn_outputs/plots/*.png 2>/dev/null | wc -l) files"
+        ls -lh pinn_outputs/plots/
     fi
     
     echo ""
-    echo "All outputs saved to: outputs/"
+    echo "All outputs saved to: pinn_outputs/"
     
 else
     echo "Training failed with exit code $EXIT_CODE"

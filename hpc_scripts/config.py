@@ -8,8 +8,8 @@ Modify these parameters without changing the main training script
 # ============================================================================
 
 # Number of parameter sets
-N_TRAIN_SETS = 2000   # Training parameter combinations (start smaller to verify learning)
-N_VAL_SETS = 400      # Validation parameter combinations (~20% of training)
+N_TRAIN_SETS = 5000   # Training parameter combinations 
+N_VAL_SETS = 1000      # Validation parameter combinations 
 
 # Parameter ranges for random sampling
 A_RANGE = (0.5, 2.5)    # Brusselator parameter A
@@ -65,7 +65,7 @@ N_PARAMS_PER_EPOCH = 200   # Number of parameter sets to use per training epoch
                            # DO NOT increase beyond 500 or you'll get GPU OOM!
 
 # Optimization
-N_EPOCHS = 50000        # Maximum number of training epochs
+N_EPOCHS = 500000        # Maximum number of training epochs
 LEARNING_RATE = 1e-3    # Initial learning rate (was 5e-4 - increased for faster learning)
 WEIGHT_DECAY = 1e-6     # L2 regularization (was 1e-5 - reduced to allow more flexibility)
 
@@ -102,7 +102,7 @@ GRAD_CLIP_NORM = 1.0    # Maximum gradient norm (prevents exploding gradients)
 # EARLY STOPPING
 # ============================================================================
 
-PATIENCE = 3000         # Epochs to wait for validation improvement before stopping
+PATIENCE = 50000         # Epochs to wait for validation improvement before stopping
 
 
 # ============================================================================
@@ -113,8 +113,8 @@ PATIENCE = 3000         # Epochs to wait for validation improvement before stopp
 PRINT_EVERY = 10        # Print detailed training progress every N epochs (was 100)
 
 # Output directories
-OUTPUT_DIR = 'outputs'
-PLOTS_DIR = 'outputs/plots'
+OUTPUT_DIR = 'pinn_outputs'
+PLOTS_DIR = 'pinn_outputs/plots'
 LOGS_DIR = 'logs'
 
 # Model checkpoint
@@ -160,9 +160,10 @@ NUM_WORKERS = 4
 # Use mixed precision training (faster on modern GPUs, requires torch >= 1.6)
 USE_AMP = False  # Set to True for A100/H100 GPUs
 
-# Save intermediate checkpoints
-SAVE_INTERMEDIATE = False
-INTERMEDIATE_SAVE_EVERY = 5000  # Save every N epochs
+# Periodic checkpointing (CRITICAL for HPC jobs with wall time limits)
+# Saves best model, loss plots, and example plots every N epochs
+# This ensures progress is saved even if job is terminated early
+CHECKPOINT_EVERY = 1000  # Save checkpoint every N epochs (set lower for long jobs)
 
 # Verbose output
 VERBOSE = True

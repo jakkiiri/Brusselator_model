@@ -9,7 +9,41 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingWarmResta
 import time
 import os
 import json
+import signal
+import sys
 from datetime import datetime
+
+# Global flag for graceful termination
+_TERMINATION_REQUESTED = False
+_PINN_INSTANCE = None  # Will hold reference to PINN for signal handler
+
+def signal_handler(signum, frame):
+    """Handle termination signals (SIGTERM, SIGINT) gracefully"""
+    global _TERMINATION_REQUESTED, _PINN_INSTANCE
+    signal_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+    print(f"\n{'='*80}")
+    print(f"RECEIVED {signal_name} SIGNAL - Initiating graceful shutdown...")
+    print(f"{'='*80}")
+    _TERMINATION_REQUESTED = True
+    
+    # If we have a PINN instance, save immediately
+    if _PINN_INSTANCE is not None:
+        print("Saving checkpoint before termination...")
+        try:
+            _PINN_INSTANCE.save_checkpoint_on_interrupt()
+        except Exception as e:
+            print(f"Error saving checkpoint: {e}")
+    
+    # Don't exit immediately - let the training loop handle it gracefully
+    # If called twice, force exit
+    if hasattr(signal_handler, 'called_before') and signal_handler.called_before:
+        print("Forced exit due to repeated signal")
+        sys.exit(1)
+    signal_handler.called_before = True
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)  # SLURM sends this before killing job
+signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
 
 # Brusselator RHS
 def brusselator_rhs(x, y, A, B):
@@ -402,7 +436,7 @@ class MultiParamBrusselatorPINN:
               lambda_data=10.0, n_data_points=100,
               print_every=100, patience=500, batch_size=50, data_batch_size=5000,
               n_params_per_epoch=100, scheduler_type='cosine_warm_restarts',
-              warmup_epochs=500, T_0=1000, T_mult=2):
+              warmup_epochs=500, T_0=1000, T_mult=2, checkpoint_every=1000):
         """
         Train the model on multiple parameter sets with validation
         
@@ -415,6 +449,7 @@ class MultiParamBrusselatorPINN:
         warmup_epochs: number of epochs for learning rate warmup (linear increase)
         T_0: initial restart period for cosine annealing (epochs between restarts)
         T_mult: multiplier for restart period after each restart (2 = doubling)
+        checkpoint_every: save checkpoint (model, plots) every N epochs for crash recovery
         """
         print("=" * 80)
         print("MULTI-PARAMETER BRUSSELATOR PINN TRAINING")
@@ -516,10 +551,23 @@ class MultiParamBrusselatorPINN:
         print("\nStarting training...")
         print("=" * 80)
         
+        # Register this instance globally for signal handler
+        global _PINN_INSTANCE
+        _PINN_INSTANCE = self
+        
+        # Checkpoint settings - save periodically in case of termination
+        last_checkpoint_epoch = 0
+        print(f"  Periodic checkpoints: every {checkpoint_every} epochs")
+        
         start_time = time.time()
         base_lr = learning_rate  # Store for warmup calculation
         
         for epoch in range(n_epochs):
+            # Check for termination signal
+            global _TERMINATION_REQUESTED
+            if _TERMINATION_REQUESTED:
+                print(f"\nTermination requested at epoch {epoch+1}. Stopping training...")
+                break
             # Learning rate warmup (linear increase from 0.1*lr to lr)
             if warmup_epochs > 0 and epoch < warmup_epochs:
                 warmup_factor = 0.1 + 0.9 * (epoch / warmup_epochs)
@@ -694,16 +742,55 @@ class MultiParamBrusselatorPINN:
                       f"Pat: {self.patience_counter:3d}/{patience} | "
                       f"Best: {self.best_val_loss:.4e} | "
                       f"ETA: {eta/60:.1f}min{mem_str}")
+            
+            # Periodic checkpoint - save best model, loss history, and examples every N epochs
+            # This ensures we don't lose progress if the job is terminated
+            if (epoch + 1) % checkpoint_every == 0 and (epoch + 1) > last_checkpoint_epoch:
+                last_checkpoint_epoch = epoch + 1
+                print(f"\n--- Periodic Checkpoint at epoch {epoch+1} ---")
+                try:
+                    # Save best model
+                    if self.best_model_state is not None:
+                        self.save_best_model('brusselator_pinn_best_model.pth')
+                    # Save loss history plot
+                    self.plot_loss_history()
+                    # Save training/validation examples
+                    self.plot_final_results()
+                    print(f"--- Checkpoint complete ---\n")
+                except Exception as e:
+                    print(f"Warning: Checkpoint failed: {e}")
         
         total_time = time.time() - start_time
         print("=" * 80)
-        print(f"Training completed in {total_time:.2f}s ({total_time/60:.2f} minutes)")
+        
+        # Determine how training ended
+        if _TERMINATION_REQUESTED:
+            print("TRAINING INTERRUPTED - Terminated by signal")
+        elif self.patience_counter >= patience:
+            print("TRAINING COMPLETED - Early stopping triggered")
+        else:
+            print("TRAINING COMPLETED - Reached max epochs")
+        
+        print(f"Training time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
         print(f"Total epochs trained: {epoch+1}")
         print(f"Best validation loss: {self.best_val_loss:.6e} at epoch {self.best_epoch}")
         if len(self.loss_history['train_total']) > 0:
             print(f"Final training loss: {self.loss_history['train_total'][-1]:.6e}")
             print(f"Final validation loss: {self.loss_history['val_total'][-1]:.6e}")
         print("=" * 80)
+        
+        # Always save final checkpoint after training ends (regardless of how)
+        print("\nSaving final outputs...")
+        try:
+            if self.best_model_state is not None:
+                self.save_best_model('brusselator_pinn_best_model.pth')
+            self.save_model('brusselator_pinn_last_model.pth')
+            self.plot_loss_history()
+            self.plot_final_results()
+            self.save_training_summary('training_summary.json')
+            print("All outputs saved successfully!")
+        except Exception as e:
+            print(f"Warning: Error saving final outputs: {e}")
     
     def predict(self, t, A, B, x0, y0):
         """Extract predictions from PINN for given A, B, x0, y0 parameters"""
@@ -988,6 +1075,98 @@ class MultiParamBrusselatorPINN:
         with open(path, 'w') as f:
             json.dump(summary, f, indent=2)
         print(f"Training summary saved to {path}")
+    
+    def save_checkpoint_on_interrupt(self):
+        """Emergency save when job is being terminated - saves everything important"""
+        print("\n" + "="*80)
+        print("EMERGENCY CHECKPOINT - Saving all progress before termination")
+        print("="*80)
+        
+        try:
+            # Save best model
+            if self.best_model_state is not None:
+                self.save_best_model('brusselator_pinn_best_model.pth')
+            
+            # Save last model state
+            self.save_model('brusselator_pinn_last_model.pth')
+            
+            # Save loss history plot
+            self.plot_loss_history()
+            
+            # Save training examples (quick version)
+            self.plot_final_results()
+            
+            # Save training summary
+            self.save_training_summary('training_summary.json')
+            
+            print("="*80)
+            print("CHECKPOINT SAVED SUCCESSFULLY")
+            print(f"  Best model: outputs/brusselator_pinn_best_model.pth (epoch {self.best_epoch})")
+            print(f"  Last model: outputs/brusselator_pinn_last_model.pth")
+            print(f"  Loss plots: outputs/plots/loss_history.png")
+            print(f"  Examples: outputs/plots/training_examples.png, validation_examples.png")
+            print("="*80)
+        except Exception as e:
+            print(f"ERROR during checkpoint save: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def plot_loss_history(self):
+        """Plot and save just the loss history (can be called during training)"""
+        if len(self.loss_history['train_total']) == 0:
+            print("No loss history to plot")
+            return
+        
+        fig_loss, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # Total loss
+        axes[0, 0].semilogy(self.loss_history['train_total'], 'b-', linewidth=1, alpha=0.7, label='Train')
+        axes[0, 0].semilogy(self.loss_history['val_total'], 'r-', linewidth=1, alpha=0.7, label='Val')
+        if self.best_epoch > 0:
+            axes[0, 0].axvline(self.best_epoch-1, color='g', linestyle='--', linewidth=1, label=f'Best (epoch {self.best_epoch})')
+        axes[0, 0].set_xlabel('Epoch', fontsize=12)
+        axes[0, 0].set_ylabel('Total Loss', fontsize=12)
+        axes[0, 0].set_title('Total Loss', fontsize=14)
+        axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].legend()
+        
+        # Physics loss
+        axes[0, 1].semilogy(self.loss_history['train_physics'], 'b-', linewidth=1, alpha=0.7, label='Train')
+        axes[0, 1].semilogy(self.loss_history['val_physics'], 'r-', linewidth=1, alpha=0.7, label='Val')
+        axes[0, 1].set_xlabel('Epoch', fontsize=12)
+        axes[0, 1].set_ylabel('Physics Loss', fontsize=12)
+        axes[0, 1].set_title('Physics Loss', fontsize=14)
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].legend()
+        
+        # IC loss
+        axes[1, 0].semilogy(self.loss_history['train_ic'], 'b-', linewidth=1, alpha=0.7, label='Train')
+        axes[1, 0].semilogy(self.loss_history['val_ic'], 'r-', linewidth=1, alpha=0.7, label='Val')
+        axes[1, 0].set_xlabel('Epoch', fontsize=12)
+        axes[1, 0].set_ylabel('IC Loss', fontsize=12)
+        axes[1, 0].set_title('Initial Condition Loss', fontsize=14)
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].legend()
+        
+        # Data loss
+        axes[1, 1].semilogy(self.loss_history['train_data'], 'b-', linewidth=1, alpha=0.7, label='Train')
+        axes[1, 1].semilogy(self.loss_history['val_data'], 'r-', linewidth=1, alpha=0.7, label='Val')
+        axes[1, 1].set_xlabel('Epoch', fontsize=12)
+        axes[1, 1].set_ylabel('Data Loss', fontsize=12)
+        axes[1, 1].set_title('Data Loss', fontsize=14)
+        axes[1, 1].grid(True, alpha=0.3)
+        axes[1, 1].legend()
+        
+        # Add overall title with current status
+        n_epochs = len(self.loss_history['train_total'])
+        fig_loss.suptitle(f'Training Progress - {n_epochs} epochs (Best: epoch {self.best_epoch}, val_loss={self.best_val_loss:.4e})', 
+                         fontsize=14, fontweight='bold')
+        
+        plt.tight_layout()
+        loss_path = os.path.join(self.output_dir, 'plots', 'loss_history.png')
+        plt.savefig(loss_path, dpi=150, bbox_inches='tight')  # Lower DPI for faster saves
+        print(f"  Loss history saved: {loss_path}")
+        plt.close()
 
 
 def main():
@@ -1033,6 +1212,8 @@ def main():
         WARMUP_EPOCHS = getattr(config, 'WARMUP_EPOCHS', 500)
         COSINE_T_0 = getattr(config, 'COSINE_T_0', 1000)
         COSINE_T_MULT = getattr(config, 'COSINE_T_MULT', 2)
+        # Checkpoint settings
+        CHECKPOINT_EVERY = getattr(config, 'CHECKPOINT_EVERY', 1000)
     except ImportError:
         print("config.py not found, using default configuration")
         # Default configuration
@@ -1067,6 +1248,8 @@ def main():
         WARMUP_EPOCHS = 500
         COSINE_T_0 = 1000
         COSINE_T_MULT = 2
+        # Checkpoint settings
+        CHECKPOINT_EVERY = 1000
     
     # Configuration
     n_train_sets = N_TRAIN_SETS
@@ -1142,30 +1325,32 @@ def main():
         scheduler_type=SCHEDULER_TYPE,
         warmup_epochs=WARMUP_EPOCHS,
         T_0=COSINE_T_0,
-        T_mult=COSINE_T_MULT
+        T_mult=COSINE_T_MULT,
+        checkpoint_every=CHECKPOINT_EVERY
     )
     
     # Evaluate on training and validation sets (sample for speed)
-    n_eval_train = min(N_EVAL_TRAIN, len(param_sets_train))
-    n_eval_val = min(N_EVAL_VAL, len(param_sets_val))
+    # Skip evaluation if terminated early to save time
+    if not _TERMINATION_REQUESTED:
+        n_eval_train = min(N_EVAL_TRAIN, len(param_sets_train))
+        n_eval_val = min(N_EVAL_VAL, len(param_sets_val))
+        
+        train_metrics = pinn.evaluate(param_sets_train[:n_eval_train], set_name="Training Sample")
+        val_metrics = pinn.evaluate(param_sets_val[:n_eval_val], set_name="Validation Sample")
+    else:
+        print("\nSkipping evaluation due to early termination")
     
-    train_metrics = pinn.evaluate(param_sets_train[:n_eval_train], set_name="Training Sample")
-    val_metrics = pinn.evaluate(param_sets_val[:n_eval_val], set_name="Validation Sample")
-    
-    # Generate final plots (only after training is complete)
-    pinn.plot_final_results()
-    
-    # Save both best model (lowest val loss) and last model (final training state)
-    print("\nSaving models...")
-    pinn.save_best_model('brusselator_pinn_best_model.pth')  # Best model from early stopping
-    pinn.save_model('brusselator_pinn_last_model.pth')  # Last model state
-    pinn.save_training_summary('training_summary.json')
+    # Note: Models and plots are now saved automatically in train() function
     
     print("\n" + "=" * 80)
-    print("TRAINING COMPLETED SUCCESSFULLY")
+    print("JOB FINISHED")
     print("=" * 80)
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"All outputs saved to: {output_dir}")
+    print(f"  - Best model: {output_dir}/brusselator_pinn_best_model.pth")
+    print(f"  - Last model: {output_dir}/brusselator_pinn_last_model.pth")
+    print(f"  - Loss plots: {output_dir}/plots/loss_history.png")
+    print(f"  - Examples: {output_dir}/plots/training_examples.png, validation_examples.png")
     print("=" * 80)
 
 
