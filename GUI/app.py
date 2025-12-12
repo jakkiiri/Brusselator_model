@@ -452,7 +452,7 @@ if len(selected_solvers) >= 2:
     st.markdown("---")
     
     # Run button
-    if st.button("🚀 Run Comparison", type="primary", use_container_width=True):
+    if st.button("🚀 Run Comparison", type="primary", width="stretch"):
         
         results = []
         
@@ -715,22 +715,23 @@ if len(selected_solvers) >= 2:
         
         comparison_data = []
         for result in results:
+            # Convert all values to strings for consistent DataFrame serialization
             row = {
-                "Solver": result['name'],
-                "dt": result['dt'] if result['dt'] else "N/A",
-                "Steps": f"{result['n_steps']:,}" if result['n_steps'] else "N/A",
-                "Total Time (ms)": f"{result['total_time']*1000:.4f}",
-                "Time/Step (μs)": f"{result['time_per_step']*1e6:.3f}" if result['time_per_step'] else "N/A",
-                "MSE (total)": f"{result['accuracy']['mse_total']:.2e}",
-                "MSE (x)": f"{result['accuracy']['mse_x']:.2e}",
-                "MSE (y)": f"{result['accuracy']['mse_y']:.2e}",
-                "RMSE": f"{result['accuracy']['rmse_total']:.2e}",
-                "Accuracy": get_accuracy_label(result['accuracy']['mse_total'])
+                "Solver": str(result['name']),
+                "dt": str(result['dt']) if result['dt'] is not None else "-",
+                "Steps": str(f"{result['n_steps']:,}") if result['n_steps'] is not None else "-",
+                "Total Time (ms)": str(f"{result['total_time']*1000:.4f}"),
+                "Time/Step (μs)": str(f"{result['time_per_step']*1e6:.3f}") if result['time_per_step'] is not None else "-",
+                "MSE (total)": str(f"{result['accuracy']['mse_total']:.2e}"),
+                "MSE (x)": str(f"{result['accuracy']['mse_x']:.2e}"),
+                "MSE (y)": str(f"{result['accuracy']['mse_y']:.2e}"),
+                "RMSE": str(f"{result['accuracy']['rmse_total']:.2e}"),
+                "Accuracy": str(get_accuracy_label(result['accuracy']['mse_total']))
             }
             comparison_data.append(row)
         
         df = pd.DataFrame(comparison_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, hide_index=True)
         
         # ================================================================
         # PARAMETER SUMMARY
