@@ -5,6 +5,8 @@ A Streamlit application for comparing different numerical solvers
 
 import streamlit as st
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Set non-interactive backend before importing pyplot
 import matplotlib.pyplot as plt
 import time
 import sys
