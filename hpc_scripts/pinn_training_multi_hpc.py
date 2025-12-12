@@ -436,7 +436,8 @@ class MultiParamBrusselatorPINN:
               lambda_data=10.0, n_data_points=100,
               print_every=100, patience=500, batch_size=50, data_batch_size=5000,
               n_params_per_epoch=100, scheduler_type='cosine_warm_restarts',
-              warmup_epochs=500, T_0=1000, T_mult=2, checkpoint_every=1000):
+              warmup_epochs=500, T_0=1000, T_mult=2, checkpoint_every=1000,
+              auto_resume=True, resume_checkpoint_filename='training_checkpoint.pth'):
         """
         Train the model on multiple parameter sets with validation
         
@@ -450,6 +451,8 @@ class MultiParamBrusselatorPINN:
         T_0: initial restart period for cosine annealing (epochs between restarts)
         T_mult: multiplier for restart period after each restart (2 = doubling)
         checkpoint_every: save checkpoint (model, plots) every N epochs for crash recovery
+        auto_resume: if True, automatically resume from checkpoint if found
+        resume_checkpoint_filename: filename for the resumable checkpoint
         """
         print("=" * 80)
         print("MULTI-PARAMETER BRUSSELATOR PINN TRAINING")
@@ -534,6 +537,38 @@ class MultiParamBrusselatorPINN:
         if warmup_epochs > 0:
             print(f"  Learning rate warmup: {warmup_epochs} epochs")
         
+        # ============================================================
+        # RESUME FROM CHECKPOINT (if available and auto_resume is True)
+        # ============================================================
+        start_epoch = 0
+        resumed_from_checkpoint = False
+        
+        if auto_resume:
+            checkpoint = self.load_resume_checkpoint(resume_checkpoint_filename)
+            if checkpoint is not None:
+                # Restore optimizer state
+                try:
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    print("  Optimizer state restored")
+                except Exception as e:
+                    print(f"  WARNING: Could not restore optimizer state: {e}")
+                    print("  Continuing with fresh optimizer...")
+                
+                # Restore scheduler state
+                try:
+                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                    print("  Scheduler state restored")
+                except Exception as e:
+                    print(f"  WARNING: Could not restore scheduler state: {e}")
+                    print("  Continuing with fresh scheduler...")
+                
+                # Set start epoch (resume from next epoch after checkpoint)
+                start_epoch = checkpoint['epoch'] + 1
+                resumed_from_checkpoint = True
+                print(f"  Resuming training from epoch {start_epoch}")
+                print(f"  Current best val loss: {self.best_val_loss:.6e}")
+                print(f"  Patience counter: {self.patience_counter}/{patience}")
+        
         # Check initial GPU memory if CUDA is available
         if torch.cuda.is_available() and self.device.type == 'cuda':
             torch.cuda.empty_cache()
@@ -548,21 +583,30 @@ class MultiParamBrusselatorPINN:
             print("WARNING: No model parameters require gradients!")
         
         # Training loop
-        print("\nStarting training...")
+        if resumed_from_checkpoint:
+            print(f"\nResuming training from epoch {start_epoch}...")
+        else:
+            print("\nStarting training from scratch...")
         print("=" * 80)
         
         # Register this instance globally for signal handler
         global _PINN_INSTANCE
         _PINN_INSTANCE = self
         
+        # Store checkpoint filename and scheduler_type for use in checkpointing
+        self._resume_checkpoint_filename = resume_checkpoint_filename
+        self._scheduler_type = scheduler_type
+        self._current_optimizer = optimizer
+        self._current_scheduler = scheduler
+        
         # Checkpoint settings - save periodically in case of termination
-        last_checkpoint_epoch = 0
+        last_checkpoint_epoch = start_epoch
         print(f"  Periodic checkpoints: every {checkpoint_every} epochs")
         
         start_time = time.time()
         base_lr = learning_rate  # Store for warmup calculation
         
-        for epoch in range(n_epochs):
+        for epoch in range(start_epoch, n_epochs):
             # Check for termination signal
             global _TERMINATION_REQUESTED
             if _TERMINATION_REQUESTED:
@@ -749,6 +793,14 @@ class MultiParamBrusselatorPINN:
                 last_checkpoint_epoch = epoch + 1
                 print(f"\n--- Periodic Checkpoint at epoch {epoch+1} ---")
                 try:
+                    # Save FULL RESUME CHECKPOINT (most important - allows training to continue)
+                    self.save_resume_checkpoint(
+                        epoch=epoch,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        scheduler_type=scheduler_type,
+                        filename=resume_checkpoint_filename
+                    )
                     # Save best model
                     if self.best_model_state is not None:
                         self.save_best_model('brusselator_pinn_best_model.pth')
@@ -782,6 +834,14 @@ class MultiParamBrusselatorPINN:
         # Always save final checkpoint after training ends (regardless of how)
         print("\nSaving final outputs...")
         try:
+            # Save full resume checkpoint (for potential future continuation)
+            self.save_resume_checkpoint(
+                epoch=epoch,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scheduler_type=scheduler_type,
+                filename=resume_checkpoint_filename
+            )
             if self.best_model_state is not None:
                 self.save_best_model('brusselator_pinn_best_model.pth')
             self.save_model('brusselator_pinn_last_model.pth')
@@ -1083,6 +1143,38 @@ class MultiParamBrusselatorPINN:
         print("="*80)
         
         try:
+            # Save FULL RESUME CHECKPOINT (most important - allows training to continue!)
+            # This uses the stored optimizer/scheduler references from training
+            if hasattr(self, '_current_optimizer') and hasattr(self, '_current_scheduler'):
+                current_epoch = len(self.loss_history['train_total']) - 1
+                self.save_resume_checkpoint(
+                    epoch=current_epoch,
+                    optimizer=self._current_optimizer,
+                    scheduler=self._current_scheduler,
+                    scheduler_type=getattr(self, '_scheduler_type', 'cosine_warm_restarts'),
+                    filename=getattr(self, '_resume_checkpoint_filename', 'training_checkpoint.pth')
+                )
+            else:
+                print("  Warning: Optimizer/scheduler not available, saving minimal checkpoint...")
+                # Save a minimal checkpoint without optimizer/scheduler state
+                path = os.path.join(self.output_dir, 'training_checkpoint.pth')
+                checkpoint = {
+                    'epoch': len(self.loss_history['train_total']) - 1,
+                    'model_state_dict': self.model.state_dict(),
+                    'best_val_loss': self.best_val_loss,
+                    'best_epoch': self.best_epoch,
+                    'patience_counter': self.patience_counter,
+                    'best_model_state': self.best_model_state,
+                    'loss_history': self.loss_history,
+                    'n_train_sets': len(self.param_sets_train),
+                    'n_val_sets': len(self.param_sets_val),
+                    't_min': self.t_min,
+                    't_max': self.t_max,
+                    'save_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                }
+                torch.save(checkpoint, path)
+                print(f"  Minimal resume checkpoint saved: {path}")
+            
             # Save best model
             if self.best_model_state is not None:
                 self.save_best_model('brusselator_pinn_best_model.pth')
@@ -1100,16 +1192,107 @@ class MultiParamBrusselatorPINN:
             self.save_training_summary('training_summary.json')
             
             print("="*80)
-            print("CHECKPOINT SAVED SUCCESSFULLY")
-            print(f"  Best model: outputs/brusselator_pinn_best_model.pth (epoch {self.best_epoch})")
-            print(f"  Last model: outputs/brusselator_pinn_last_model.pth")
-            print(f"  Loss plots: outputs/plots/loss_history.png")
-            print(f"  Examples: outputs/plots/training_examples.png, validation_examples.png")
+            print("CHECKPOINT SAVED SUCCESSFULLY - TRAINING CAN BE RESUMED!")
+            print(f"  Resume checkpoint: {self.output_dir}/training_checkpoint.pth")
+            print(f"  Best model: {self.output_dir}/brusselator_pinn_best_model.pth (epoch {self.best_epoch})")
+            print(f"  Last model: {self.output_dir}/brusselator_pinn_last_model.pth")
+            print(f"  Loss plots: {self.output_dir}/plots/loss_history.png")
+            print("  To resume: Just submit the job again - it will auto-detect the checkpoint!")
             print("="*80)
         except Exception as e:
             print(f"ERROR during checkpoint save: {e}")
             import traceback
             traceback.print_exc()
+    
+    def save_resume_checkpoint(self, epoch, optimizer, scheduler, scheduler_type, filename='training_checkpoint.pth'):
+        """
+        Save a full checkpoint that can be used to resume training.
+        Contains all state needed to continue from this exact point.
+        """
+        path = os.path.join(self.output_dir, filename)
+        checkpoint = {
+            # Training state
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'scheduler_type': scheduler_type,
+            
+            # Best model tracking
+            'best_val_loss': self.best_val_loss,
+            'best_epoch': self.best_epoch,
+            'patience_counter': self.patience_counter,
+            'best_model_state': self.best_model_state,
+            
+            # Loss history (complete)
+            'loss_history': self.loss_history,
+            
+            # Parameter sets (for verification on resume)
+            'n_train_sets': len(self.param_sets_train),
+            'n_val_sets': len(self.param_sets_val),
+            't_min': self.t_min,
+            't_max': self.t_max,
+            
+            # Timestamp for tracking
+            'save_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        torch.save(checkpoint, path)
+        print(f"  Resume checkpoint saved: {path} (epoch {epoch})")
+        return path
+    
+    def load_resume_checkpoint(self, filename='training_checkpoint.pth'):
+        """
+        Load a checkpoint to resume training.
+        Returns checkpoint dict if found, None otherwise.
+        """
+        path = os.path.join(self.output_dir, filename)
+        if not os.path.exists(path):
+            return None
+        
+        print(f"\n{'='*80}")
+        print("RESUME CHECKPOINT FOUND")
+        print(f"{'='*80}")
+        print(f"Loading checkpoint from: {path}")
+        
+        try:
+            checkpoint = torch.load(path, map_location=self.device)
+            
+            # Verify compatibility
+            if checkpoint['n_train_sets'] != len(self.param_sets_train):
+                print(f"WARNING: Training set size mismatch!")
+                print(f"  Checkpoint: {checkpoint['n_train_sets']}, Current: {len(self.param_sets_train)}")
+                print("  Resuming anyway (using current parameter sets)...")
+            
+            if checkpoint['n_val_sets'] != len(self.param_sets_val):
+                print(f"WARNING: Validation set size mismatch!")
+                print(f"  Checkpoint: {checkpoint['n_val_sets']}, Current: {len(self.param_sets_val)}")
+                print("  Resuming anyway (using current parameter sets)...")
+            
+            # Restore model state
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Restore tracking state
+            self.best_val_loss = checkpoint['best_val_loss']
+            self.best_epoch = checkpoint['best_epoch']
+            self.patience_counter = checkpoint['patience_counter']
+            self.best_model_state = checkpoint['best_model_state']
+            self.loss_history = checkpoint['loss_history']
+            
+            print(f"  Resumed from epoch: {checkpoint['epoch']}")
+            print(f"  Best validation loss: {checkpoint['best_val_loss']:.6e} (epoch {checkpoint['best_epoch']})")
+            print(f"  Patience counter: {checkpoint['patience_counter']}")
+            print(f"  Loss history entries: {len(checkpoint['loss_history']['train_total'])}")
+            print(f"  Checkpoint saved at: {checkpoint.get('save_time', 'unknown')}")
+            print(f"{'='*80}\n")
+            
+            return checkpoint
+            
+        except Exception as e:
+            print(f"ERROR loading checkpoint: {e}")
+            print("Starting fresh training...")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def plot_loss_history(self):
         """Plot and save just the loss history (can be called during training)"""
@@ -1214,6 +1397,9 @@ def main():
         COSINE_T_MULT = getattr(config, 'COSINE_T_MULT', 2)
         # Checkpoint settings
         CHECKPOINT_EVERY = getattr(config, 'CHECKPOINT_EVERY', 1000)
+        # Resume settings
+        AUTO_RESUME = getattr(config, 'AUTO_RESUME', True)
+        RESUME_CHECKPOINT_FILENAME = getattr(config, 'RESUME_CHECKPOINT_FILENAME', 'training_checkpoint.pth')
     except ImportError:
         print("config.py not found, using default configuration")
         # Default configuration
@@ -1250,6 +1436,9 @@ def main():
         COSINE_T_MULT = 2
         # Checkpoint settings
         CHECKPOINT_EVERY = 1000
+        # Resume settings
+        AUTO_RESUME = True
+        RESUME_CHECKPOINT_FILENAME = 'training_checkpoint.pth'
     
     # Configuration
     n_train_sets = N_TRAIN_SETS
@@ -1284,6 +1473,15 @@ def main():
     print(f"  y0: {y0_range}")
     print(f"\nTime range: [{t_min}, {t_max}]")
     print(f"Output directory: {output_dir}")
+    print(f"\nResume Settings:")
+    print(f"  Auto-resume enabled: {AUTO_RESUME}")
+    print(f"  Checkpoint file: {output_dir}/{RESUME_CHECKPOINT_FILENAME}")
+    # Check if checkpoint exists
+    checkpoint_path = os.path.join(output_dir, RESUME_CHECKPOINT_FILENAME)
+    if os.path.exists(checkpoint_path):
+        print(f"  Checkpoint found! Training will resume from previous state.")
+    else:
+        print(f"  No checkpoint found. Starting fresh training.")
     print("=" * 80)
     
     # Generate parameter sets
@@ -1308,7 +1506,7 @@ def main():
         output_dir=output_dir
     )
     
-    # Train the model
+    # Train the model (with automatic resume support!)
     pinn.train(
         n_collocation=N_COLLOCATION,
         n_epochs=N_EPOCHS,
@@ -1326,7 +1524,9 @@ def main():
         warmup_epochs=WARMUP_EPOCHS,
         T_0=COSINE_T_0,
         T_mult=COSINE_T_MULT,
-        checkpoint_every=CHECKPOINT_EVERY
+        checkpoint_every=CHECKPOINT_EVERY,
+        auto_resume=AUTO_RESUME,
+        resume_checkpoint_filename=RESUME_CHECKPOINT_FILENAME
     )
     
     # Evaluate on training and validation sets (sample for speed)
@@ -1347,10 +1547,14 @@ def main():
     print("=" * 80)
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"All outputs saved to: {output_dir}")
+    print(f"  - Resume checkpoint: {output_dir}/{RESUME_CHECKPOINT_FILENAME}")
     print(f"  - Best model: {output_dir}/brusselator_pinn_best_model.pth")
     print(f"  - Last model: {output_dir}/brusselator_pinn_last_model.pth")
     print(f"  - Loss plots: {output_dir}/plots/loss_history.png")
     print(f"  - Examples: {output_dir}/plots/training_examples.png, validation_examples.png")
+    print("")
+    print("To continue training: Just submit the job again!")
+    print("The training will automatically resume from the checkpoint.")
     print("=" * 80)
 
 

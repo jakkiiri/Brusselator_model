@@ -121,6 +121,10 @@ LOGS_DIR = 'logs'
 MODEL_FILENAME = 'brusselator_pinn_model.pth'
 SUMMARY_FILENAME = 'training_summary.json'
 
+# Resume checkpoint (contains full training state for resumption)
+RESUME_CHECKPOINT_FILENAME = 'training_checkpoint.pth'  # Full state for resumption
+AUTO_RESUME = True  # Automatically resume from checkpoint if found
+
 
 # ============================================================================
 # EVALUATION
