@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import time
 import sys
 import os
-import importlib.util
 import pandas as pd
 
 # Add parent directory to path for imports
@@ -22,16 +21,8 @@ from Regular_Euler.regular_euler import brusselator_euler as euler_solve
 # Import Improved Euler solver
 from Improved_Euler.improved_euler import brusselator_euler as improved_euler_solve
 
-# Import RK4 solver (special handling for unusual filename "RK4..py")
-def load_rk4_module():
-    """Load RK4 module with special handling for the double-dot filename"""
-    rk4_path = os.path.join(PARENT_DIR, "RK4", "RK4..py")
-    spec = importlib.util.spec_from_file_location("rk4_module", rk4_path)
-    rk4_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(rk4_module)
-    return rk4_module.brusselator_rk4
-
-rk4_solve = load_rk4_module()
+# Import RK4 solver
+from RK4.RK4 import brusselator_rk4 as rk4_solve
 
 # Import PINN solver
 from PINN.pinn_model import BrusselatorPINNSolver
