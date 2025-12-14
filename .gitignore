@@ -1,1 +1,7 @@
 /venv/
+/GUI/
+/Improved_Euler/
+/PINN/
+/RK4/
+/Regular_Euler/
+# Ignore files due to pycache

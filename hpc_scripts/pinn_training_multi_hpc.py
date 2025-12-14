@@ -546,24 +546,31 @@ class MultiParamBrusselatorPINN:
         if auto_resume:
             checkpoint = self.load_resume_checkpoint(resume_checkpoint_filename)
             if checkpoint is not None:
-                # Restore optimizer state
-                try:
-                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                    print("  Optimizer state restored")
-                except Exception as e:
-                    print(f"  WARNING: Could not restore optimizer state: {e}")
-                    print("  Continuing with fresh optimizer...")
+                # Restore optimizer state (if available in checkpoint)
+                if 'optimizer_state_dict' in checkpoint:
+                    try:
+                        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                        print("  Optimizer state restored")
+                    except Exception as e:
+                        print(f"  WARNING: Could not restore optimizer state: {e}")
+                        print("  Continuing with fresh optimizer...")
+                else:
+                    print("  Note: No optimizer state in checkpoint (older format), using fresh optimizer")
                 
-                # Restore scheduler state
-                try:
-                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                    print("  Scheduler state restored")
-                except Exception as e:
-                    print(f"  WARNING: Could not restore scheduler state: {e}")
-                    print("  Continuing with fresh scheduler...")
+                # Restore scheduler state (if available in checkpoint)
+                if 'scheduler_state_dict' in checkpoint:
+                    try:
+                        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                        print("  Scheduler state restored")
+                    except Exception as e:
+                        print(f"  WARNING: Could not restore scheduler state: {e}")
+                        print("  Continuing with fresh scheduler...")
+                else:
+                    print("  Note: No scheduler state in checkpoint (older format), using fresh scheduler")
                 
                 # Set start epoch (resume from next epoch after checkpoint)
-                start_epoch = checkpoint['epoch'] + 1
+                # checkpoint['epoch'] is guaranteed to be set by load_resume_checkpoint
+                start_epoch = checkpoint.get('epoch', 0) + 1
                 resumed_from_checkpoint = True
                 print(f"  Resuming training from epoch {start_epoch}")
                 print(f"  Current best val loss: {self.best_val_loss:.6e}")
@@ -1244,6 +1251,9 @@ class MultiParamBrusselatorPINN:
         """
         Load a checkpoint to resume training.
         Returns checkpoint dict if found, None otherwise.
+        
+        Handles older checkpoint formats gracefully by using .get() with defaults
+        for optional fields.
         """
         path = os.path.join(self.output_dir, filename)
         if not os.path.exists(path):
@@ -1257,31 +1267,58 @@ class MultiParamBrusselatorPINN:
         try:
             checkpoint = torch.load(path, map_location=self.device)
             
-            # Verify compatibility
-            if checkpoint['n_train_sets'] != len(self.param_sets_train):
+            # List available keys for debugging
+            print(f"  Checkpoint keys: {list(checkpoint.keys())}")
+            
+            # Verify compatibility (use .get() for backward compatibility with older checkpoints)
+            ckpt_n_train = checkpoint.get('n_train_sets', None)
+            ckpt_n_val = checkpoint.get('n_val_sets', None)
+            
+            if ckpt_n_train is not None and ckpt_n_train != len(self.param_sets_train):
                 print(f"WARNING: Training set size mismatch!")
-                print(f"  Checkpoint: {checkpoint['n_train_sets']}, Current: {len(self.param_sets_train)}")
+                print(f"  Checkpoint: {ckpt_n_train}, Current: {len(self.param_sets_train)}")
                 print("  Resuming anyway (using current parameter sets)...")
+            elif ckpt_n_train is None:
+                print(f"  Note: Checkpoint doesn't contain n_train_sets (older format)")
             
-            if checkpoint['n_val_sets'] != len(self.param_sets_val):
+            if ckpt_n_val is not None and ckpt_n_val != len(self.param_sets_val):
                 print(f"WARNING: Validation set size mismatch!")
-                print(f"  Checkpoint: {checkpoint['n_val_sets']}, Current: {len(self.param_sets_val)}")
+                print(f"  Checkpoint: {ckpt_n_val}, Current: {len(self.param_sets_val)}")
                 print("  Resuming anyway (using current parameter sets)...")
+            elif ckpt_n_val is None:
+                print(f"  Note: Checkpoint doesn't contain n_val_sets (older format)")
             
-            # Restore model state
+            # Restore model state (required field)
+            if 'model_state_dict' not in checkpoint:
+                print("ERROR: Checkpoint missing 'model_state_dict' - cannot resume!")
+                return None
             self.model.load_state_dict(checkpoint['model_state_dict'])
             
-            # Restore tracking state
-            self.best_val_loss = checkpoint['best_val_loss']
-            self.best_epoch = checkpoint['best_epoch']
-            self.patience_counter = checkpoint['patience_counter']
-            self.best_model_state = checkpoint['best_model_state']
-            self.loss_history = checkpoint['loss_history']
+            # Restore tracking state (with defaults for older checkpoints)
+            self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            self.best_epoch = checkpoint.get('best_epoch', 0)
+            self.patience_counter = checkpoint.get('patience_counter', 0)
+            self.best_model_state = checkpoint.get('best_model_state', None)
             
-            print(f"  Resumed from epoch: {checkpoint['epoch']}")
-            print(f"  Best validation loss: {checkpoint['best_val_loss']:.6e} (epoch {checkpoint['best_epoch']})")
-            print(f"  Patience counter: {checkpoint['patience_counter']}")
-            print(f"  Loss history entries: {len(checkpoint['loss_history']['train_total'])}")
+            # Restore loss history (with default empty structure for older checkpoints)
+            default_loss_history = {
+                'train_total': [], 'train_physics': [], 'train_ic': [], 'train_data': [],
+                'val_total': [], 'val_physics': [], 'val_ic': [], 'val_data': []
+            }
+            self.loss_history = checkpoint.get('loss_history', default_loss_history)
+            
+            # Get epoch (required for resume, but provide fallback)
+            resumed_epoch = checkpoint.get('epoch', len(self.loss_history['train_total']) - 1)
+            if resumed_epoch < 0:
+                resumed_epoch = 0
+            
+            # Update checkpoint with computed epoch if it was missing
+            checkpoint['epoch'] = resumed_epoch
+            
+            print(f"  Resumed from epoch: {resumed_epoch}")
+            print(f"  Best validation loss: {self.best_val_loss:.6e} (epoch {self.best_epoch})")
+            print(f"  Patience counter: {self.patience_counter}")
+            print(f"  Loss history entries: {len(self.loss_history['train_total'])}")
             print(f"  Checkpoint saved at: {checkpoint.get('save_time', 'unknown')}")
             print(f"{'='*80}\n")
             
