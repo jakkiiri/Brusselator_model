@@ -40,16 +40,18 @@ st.set_page_config(
 )
 
 # ============================================================================
-# CUSTOM STYLING
+# CUSTOM STYLING - Light/Dark Mode Compatible
 # ============================================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
     
+    /* Dark mode (default) */
     :root {
         --bg-primary: #0a0a0f;
         --bg-secondary: #12121a;
         --bg-card: #1a1a24;
+        --bg-card-end: #1f1f2e;
         --accent-cyan: #00d4ff;
         --accent-magenta: #ff00aa;
         --accent-yellow: #ffdd00;
@@ -57,10 +59,49 @@ st.markdown("""
         --text-primary: #e8e8f0;
         --text-secondary: #8888a0;
         --border-color: #2a2a3a;
+        --shadow-color: rgba(0, 0, 0, 0.3);
+        --equation-bg: #1a1a2e;
+        --equation-bg-end: #16162a;
     }
     
-    .stApp {
-        background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, #0f0a1a 100%);
+    /* Light mode overrides */
+    @media (prefers-color-scheme: light) {
+        :root {
+            --bg-primary: #f8f9fa;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-card-end: #f0f2f5;
+            --accent-cyan: #0099cc;
+            --accent-magenta: #cc0088;
+            --accent-yellow: #cc9900;
+            --accent-green: #00aa55;
+            --text-primary: #1a1a2e;
+            --text-secondary: #5a5a7a;
+            --border-color: #d0d0e0;
+            --shadow-color: rgba(0, 0, 0, 0.1);
+            --equation-bg: #f0f4f8;
+            --equation-bg-end: #e8ecf0;
+        }
+    }
+    
+    /* Streamlit theme detection - override for light theme */
+    [data-theme="light"], 
+    .stApp[data-theme="light"],
+    html[data-theme="light"] :root {
+        --bg-primary: #f8f9fa;
+        --bg-secondary: #ffffff;
+        --bg-card: #ffffff;
+        --bg-card-end: #f0f2f5;
+        --accent-cyan: #0099cc;
+        --accent-magenta: #cc0088;
+        --accent-yellow: #cc9900;
+        --accent-green: #00aa55;
+        --text-primary: #1a1a2e;
+        --text-secondary: #5a5a7a;
+        --border-color: #d0d0e0;
+        --shadow-color: rgba(0, 0, 0, 0.1);
+        --equation-bg: #f0f4f8;
+        --equation-bg-end: #e8ecf0;
     }
     
     .main-header {
@@ -85,12 +126,12 @@ st.markdown("""
     }
     
     .metric-card {
-        background: linear-gradient(145deg, var(--bg-card) 0%, #1f1f2e 100%);
+        background: linear-gradient(145deg, var(--bg-card) 0%, var(--bg-card-end) 100%);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 1.2rem;
         margin: 0.5rem 0;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 4px 20px var(--shadow-color);
     }
     
     .metric-label {
@@ -116,27 +157,28 @@ st.markdown("""
     .solver-ground { border-left: 4px solid #00ff88; }
     
     .solver-config-card {
-        background: linear-gradient(145deg, #1a1a2e 0%, #16162a 100%);
-        border: 1px solid #3a3a5a;
+        background: linear-gradient(145deg, var(--bg-card) 0%, var(--bg-card-end) 100%);
+        border: 1px solid var(--border-color);
         border-radius: 12px;
         padding: 1rem;
         margin: 0.5rem 0;
     }
     
     .equation-box {
-        background: linear-gradient(145deg, #1a1a2e 0%, #16162a 100%);
-        border: 1px solid #3a3a5a;
+        background: linear-gradient(145deg, var(--equation-bg) 0%, var(--equation-bg-end) 100%);
+        border: 1px solid var(--border-color);
         border-radius: 10px;
         padding: 1.5rem;
         font-family: 'JetBrains Mono', monospace;
         text-align: center;
         margin: 1rem 0;
+        color: var(--text-primary);
     }
     
-    .accuracy-excellent { color: #00ff88; }
-    .accuracy-good { color: #ffe66d; }
-    .accuracy-moderate { color: #ffa500; }
-    .accuracy-poor { color: #ff6b6b; }
+    .accuracy-excellent { color: #00cc66; }
+    .accuracy-good { color: #ccaa00; }
+    .accuracy-moderate { color: #ff8800; }
+    .accuracy-poor { color: #ff5555; }
     
     .stSelectbox > div > div {
         background-color: var(--bg-card);
@@ -144,7 +186,7 @@ st.markdown("""
     }
     
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #12121a 0%, #0a0a12 100%);
+        background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
         border-right: 1px solid var(--border-color);
     }
     
@@ -154,6 +196,42 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# ============================================================================
+# THEME DETECTION FOR MATPLOTLIB
+# ============================================================================
+def get_plot_theme():
+    """Detect theme and return appropriate plot colors"""
+    # Try to detect Streamlit theme from config
+    try:
+        theme_base = st.get_option("theme.base")
+        is_dark = theme_base != "light"
+    except:
+        # Default to dark theme if detection fails
+        is_dark = True
+    
+    if is_dark:
+        return {
+            "bg_primary": "#0a0a0f",
+            "bg_secondary": "#12121a",
+            "text_color": "#e8e8f0",
+            "text_secondary": "#8888a0",
+            "grid_color": "#3a3a5a",
+            "border_color": "#2a2a3a",
+            "legend_bg": "#1a1a24"
+        }
+    else:
+        return {
+            "bg_primary": "#ffffff",
+            "bg_secondary": "#f8f9fa",
+            "text_color": "#1a1a2e",
+            "text_secondary": "#5a5a7a",
+            "grid_color": "#d0d0e0",
+            "border_color": "#c0c0d0",
+            "legend_bg": "#ffffff"
+        }
+
+PLOT_THEME = get_plot_theme()
 
 # ============================================================================
 # HEADER
@@ -563,18 +641,19 @@ if len(selected_solvers) >= 2:
         
         with tab1:
             # All solvers comparison
+            theme = get_plot_theme()
             fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            fig.patch.set_facecolor('#0a0a0f')
+            fig.patch.set_facecolor(theme["bg_primary"])
             
             for ax in axes:
-                ax.set_facecolor('#12121a')
-                ax.tick_params(colors='#8888a0')
+                ax.set_facecolor(theme["bg_secondary"])
+                ax.tick_params(colors=theme["text_secondary"])
                 for spine in ax.spines.values():
-                    spine.set_color('#2a2a3a')
-                ax.xaxis.label.set_color('#e8e8f0')
-                ax.yaxis.label.set_color('#e8e8f0')
-                ax.title.set_color('#e8e8f0')
-                ax.grid(True, alpha=0.2, color='#3a3a5a')
+                    spine.set_color(theme["border_color"])
+                ax.xaxis.label.set_color(theme["text_color"])
+                ax.yaxis.label.set_color(theme["text_color"])
+                ax.title.set_color(theme["text_color"])
+                ax.grid(True, alpha=0.3, color=theme["grid_color"])
             
             # Plot ground truth
             axes[0].plot(ground_truth['t'], ground_truth['x'], 
@@ -606,12 +685,12 @@ if len(selected_solvers) >= 2:
             axes[0].set_xlabel('Time (t)', fontsize=11)
             axes[0].set_ylabel('x(t)', fontsize=11)
             axes[0].set_title('Concentration x vs Time', fontsize=12, fontweight='bold')
-            axes[0].legend(facecolor='#1a1a24', edgecolor='#2a2a3a', labelcolor='#e8e8f0')
+            axes[0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
             
             axes[1].set_xlabel('Time (t)', fontsize=11)
             axes[1].set_ylabel('y(t)', fontsize=11)
             axes[1].set_title('Concentration y vs Time', fontsize=12, fontweight='bold')
-            axes[1].legend(facecolor='#1a1a24', edgecolor='#2a2a3a', labelcolor='#e8e8f0')
+            axes[1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
             
             plt.tight_layout()
             st.pyplot(fig)
@@ -619,9 +698,10 @@ if len(selected_solvers) >= 2:
         
         with tab2:
             # Individual solver vs ground truth
+            theme = get_plot_theme()
             n_results = len(results)
             fig, axes = plt.subplots(n_results, 2, figsize=(14, 4 * n_results))
-            fig.patch.set_facecolor('#0a0a0f')
+            fig.patch.set_facecolor(theme["bg_primary"])
             
             if n_results == 1:
                 axes = axes.reshape(1, -1)
@@ -629,14 +709,14 @@ if len(selected_solvers) >= 2:
             for idx, result in enumerate(results):
                 for col in range(2):
                     ax = axes[idx, col]
-                    ax.set_facecolor('#12121a')
-                    ax.tick_params(colors='#8888a0')
+                    ax.set_facecolor(theme["bg_secondary"])
+                    ax.tick_params(colors=theme["text_secondary"])
                     for spine in ax.spines.values():
-                        spine.set_color('#2a2a3a')
-                    ax.xaxis.label.set_color('#e8e8f0')
-                    ax.yaxis.label.set_color('#e8e8f0')
-                    ax.title.set_color('#e8e8f0')
-                    ax.grid(True, alpha=0.2, color='#3a3a5a')
+                        spine.set_color(theme["border_color"])
+                    ax.xaxis.label.set_color(theme["text_color"])
+                    ax.yaxis.label.set_color(theme["text_color"])
+                    ax.title.set_color(theme["text_color"])
+                    ax.grid(True, alpha=0.3, color=theme["grid_color"])
                 
                 # Plot x comparison
                 axes[idx, 0].plot(ground_truth['t'], ground_truth['x'], 
@@ -649,7 +729,7 @@ if len(selected_solvers) >= 2:
                 axes[idx, 0].set_ylabel('x(t)')
                 axes[idx, 0].set_title(f"{result['name']} - x(t) | MSE: {result['accuracy']['mse_x']:.2e}", 
                                        fontsize=11, fontweight='bold')
-                axes[idx, 0].legend(facecolor='#1a1a24', edgecolor='#2a2a3a', labelcolor='#e8e8f0')
+                axes[idx, 0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
                 
                 # Plot y comparison
                 axes[idx, 1].plot(ground_truth['t'], ground_truth['y'], 
@@ -662,7 +742,7 @@ if len(selected_solvers) >= 2:
                 axes[idx, 1].set_ylabel('y(t)')
                 axes[idx, 1].set_title(f"{result['name']} - y(t) | MSE: {result['accuracy']['mse_y']:.2e}", 
                                        fontsize=11, fontweight='bold')
-                axes[idx, 1].legend(facecolor='#1a1a24', edgecolor='#2a2a3a', labelcolor='#e8e8f0')
+                axes[idx, 1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
             
             plt.tight_layout()
             st.pyplot(fig)
@@ -670,16 +750,17 @@ if len(selected_solvers) >= 2:
         
         with tab3:
             # Phase portrait
+            theme = get_plot_theme()
             fig, ax = plt.subplots(figsize=(10, 8))
-            fig.patch.set_facecolor('#0a0a0f')
-            ax.set_facecolor('#12121a')
-            ax.tick_params(colors='#8888a0')
+            fig.patch.set_facecolor(theme["bg_primary"])
+            ax.set_facecolor(theme["bg_secondary"])
+            ax.tick_params(colors=theme["text_secondary"])
             for spine in ax.spines.values():
-                spine.set_color('#2a2a3a')
-            ax.xaxis.label.set_color('#e8e8f0')
-            ax.yaxis.label.set_color('#e8e8f0')
-            ax.title.set_color('#e8e8f0')
-            ax.grid(True, alpha=0.2, color='#3a3a5a')
+                spine.set_color(theme["border_color"])
+            ax.xaxis.label.set_color(theme["text_color"])
+            ax.yaxis.label.set_color(theme["text_color"])
+            ax.title.set_color(theme["text_color"])
+            ax.grid(True, alpha=0.3, color=theme["grid_color"])
             
             # Plot ground truth
             ax.plot(ground_truth['x'], ground_truth['y'], 
@@ -701,7 +782,7 @@ if len(selected_solvers) >= 2:
             ax.set_xlabel('x', fontsize=12)
             ax.set_ylabel('y', fontsize=12)
             ax.set_title('Phase Portrait (x vs y)', fontsize=14, fontweight='bold')
-            ax.legend(facecolor='#1a1a24', edgecolor='#2a2a3a', labelcolor='#e8e8f0', loc='best')
+            ax.legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"], loc='best')
             
             plt.tight_layout()
             st.pyplot(fig)
