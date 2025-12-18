@@ -1,0 +1,11 @@
+{
+  "n_train_params": 5000,
+  "n_val_params": 1000,
+  "best_val_loss": 0.5901857018470764,
+  "best_epoch": 63116,
+  "total_epochs": 113116,
+  "final_train_loss": 0.837958574295044,
+  "final_val_loss": 3.6284170150756836,
+  "t_min": 0.0,
+  "t_max": 20.0
+}
