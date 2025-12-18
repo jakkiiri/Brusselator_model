@@ -18,7 +18,7 @@ _TERMINATION_REQUESTED = False
 _PINN_INSTANCE = None  # Will hold reference to PINN for signal handler
 
 def signal_handler(signum, frame):
-    """Handle termination signals (SIGTERM, SIGINT) gracefully"""
+    # Handle termination signals (SIGTERM, SIGINT) gracefully
     global _TERMINATION_REQUESTED, _PINN_INSTANCE
     signal_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
     print(f"\n{'='*80}")
@@ -54,7 +54,7 @@ def brusselator_rhs(x, y, A, B):
 
 # RK4 Integrator using scipy for stability
 def generate_rk4_data(A, B, x0, y0, t_min=0.0, t_max=20.0, n_points=100):
-    """Generate reference data using scipy's odeint (more stable than manual RK4)"""
+    # Generate reference data using scipy's odeint (more stable than manual RK4)
     from scipy.integrate import odeint
     
     def system(state, t):
@@ -71,20 +71,16 @@ def generate_rk4_data(A, B, x0, y0, t_min=0.0, t_max=20.0, n_points=100):
 # Generate random parameter sets for training/validation
 def generate_parameter_sets(n_sets, A_range=(0.5, 2.0), B_range=(2.0, 4.0), 
                            x0_range=(0.5, 2.0), y0_range=(0.5, 2.0), seed=None):
-    """
-    Generate random parameter sets for Brusselator system
-    
-    Args:
-        n_sets: Number of parameter sets to generate
-        A_range: Tuple of (min, max) for parameter A
-        B_range: Tuple of (min, max) for parameter B
-        x0_range: Tuple of (min, max) for initial condition x0
-        y0_range: Tuple of (min, max) for initial condition y0
-        seed: Random seed for reproducibility
-    
-    Returns:
-        List of parameter dictionaries
-    """
+    # Generate random parameter sets for Brusselator system 
+    # Args:
+    #     n_sets: Number of parameter sets to generate
+    #     A_range: Tuple of (min, max) for parameter A
+    #     B_range: Tuple of (min, max) for parameter B
+    #     x0_range: Tuple of (min, max) for initial condition x0
+    #     y0_range: Tuple of (min, max) for initial condition y0
+    #     seed: Random seed for reproducibility
+    # Returns:
+    #     List of parameter dictionaries
     if seed is not None:
         np.random.seed(seed)
     
@@ -144,12 +140,17 @@ class PINN(nn.Module):
 class MultiParamBrusselatorPINN:
     def __init__(self, param_sets_train, param_sets_val, t_min=0.0, t_max=20.0, 
                  device='cpu', output_dir='outputs'):
-        """
-        Initialize the PINN solver for multiple parameter sets with validation
+        # Initialize the PINN solver for multiple parameter sets with validation
         
-        param_sets_train: list of dicts with keys ['A', 'B', 'x0', 'y0'] for training
-        param_sets_val: list of dicts with keys ['A', 'B', 'x0', 'y0'] for validation
-        """
+        # Args:
+        #     param_sets_train: list of dicts with keys ['A', 'B', 'x0', 'y0'] for training
+        #     param_sets_val: list of dicts with keys ['A', 'B', 'x0', 'y0'] for validation
+        #     t_min: Minimum time value
+        #     t_max: Maximum time value
+        #     device: Device to use for training ('cpu' or 'cuda')
+        #     output_dir: Directory to save outputs
+        # Returns:
+        #     None
         self.param_sets_train = param_sets_train
         self.param_sets_val = param_sets_val
         self.t_min = t_min
@@ -187,7 +188,7 @@ class MultiParamBrusselatorPINN:
         self.best_epoch = 0
     
     def physics_loss(self, t_collocation, A, B, x0, y0):
-        """Compute physics loss (PDE residuals) for given A, B, x0, y0 parameters"""
+        # Compute physics loss (PDE residuals) for given A, B, x0, y0 parameters
         # Clone and enable gradients for this computation
         # Must create a leaf variable that requires gradients
         t = t_collocation.clone().requires_grad_(True)
@@ -231,7 +232,7 @@ class MultiParamBrusselatorPINN:
         return loss_physics
     
     def initial_condition_loss(self, param_set):
-        """Compute initial condition loss for a given parameter set"""
+        # Compute initial condition loss for a given parameter set
         t0 = torch.tensor([[self.t_min]], dtype=torch.float32, device=self.device)
         A_tensor = torch.tensor([[param_set['A']]], dtype=torch.float32, device=self.device)
         B_tensor = torch.tensor([[param_set['B']]], dtype=torch.float32, device=self.device)
@@ -251,12 +252,11 @@ class MultiParamBrusselatorPINN:
         return loss_ic
     
     def data_loss(self, t_data, x_data, y_data, A_data, B_data, x0_data, y0_data, batch_size=5000):
-        """
-        Compute data loss with batching to prevent GPU OOM
+        # Compute data loss with batching to prevent GPU OOM
         
-        batch_size: number of data points to process at once
-        Data is assumed to be on CPU and will be transferred to GPU in batches
-        """
+        # batch_size: number of data points to process at once
+        # Data is assumed to be on CPU and will be transferred to GPU in batches
+        
         if t_data is None or len(t_data) == 0:
             return torch.tensor(0.0, device=self.device)
         
@@ -325,15 +325,14 @@ class MultiParamBrusselatorPINN:
                                      y_data, A_data, B_data, x0_data, y0_data, 
                                      lambda_physics, lambda_ic, lambda_data, 
                                      batch_size=50, data_batch_size=5000):
-        """
-        Compute total loss for a set of parameters (train or val) using batching
+        # Compute total loss for a set of parameters (train or val) using batching
         
-        batch_size: number of parameter sets to process at once (prevents OOM)
-        data_batch_size: number of data points to process at once in data loss
+        # batch_size: number of parameter sets to process at once (prevents OOM)
+        # data_batch_size: number of data points to process at once in data loss
         
-        Note: We use torch.stack + mean instead of accumulating with += to properly
-              maintain gradient graphs and avoid "does not require grad" errors
-        """
+        # Note: We use torch.stack + mean instead of accumulating with += to properly 
+        # maintain gradient graphs and avoid "does not require grad" errors
+        
         # Compute physics loss for all parameter sets in batches
         loss_phys_list = []
         n_batches = (len(param_sets) + batch_size - 1) // batch_size
@@ -377,7 +376,7 @@ class MultiParamBrusselatorPINN:
         return loss_total, loss_phys, loss_ic, loss_dat
     
     def prepare_data(self, param_sets, n_data_points):
-        """Generate training/validation data for parameter sets"""
+        # Generate training/validation data for parameter sets
         all_t_data = []
         all_x_data = []
         all_y_data = []
@@ -438,22 +437,18 @@ class MultiParamBrusselatorPINN:
               n_params_per_epoch=100, scheduler_type='cosine_warm_restarts',
               warmup_epochs=500, T_0=1000, T_mult=2, checkpoint_every=1000,
               auto_resume=True, resume_checkpoint_filename='training_checkpoint.pth'):
-        """
-        Train the model on multiple parameter sets with validation
+        # Train the model on multiple parameter sets with validation
         
-        patience: number of epochs to wait for validation improvement before early stopping
-        batch_size: number of parameter sets to process at once (prevents GPU OOM)
-        data_batch_size: number of data points to process at once in data loss (prevents GPU OOM)
-        n_params_per_epoch: number of parameter sets to randomly sample per training epoch
-                           (smaller = less memory, more epochs needed for convergence)
-        scheduler_type: 'cosine_warm_restarts' (recommended) or 'reduce_on_plateau'
-        warmup_epochs: number of epochs for learning rate warmup (linear increase)
-        T_0: initial restart period for cosine annealing (epochs between restarts)
-        T_mult: multiplier for restart period after each restart (2 = doubling)
-        checkpoint_every: save checkpoint (model, plots) every N epochs for crash recovery
-        auto_resume: if True, automatically resume from checkpoint if found
-        resume_checkpoint_filename: filename for the resumable checkpoint
-        """
+        # Args:
+        #     n_collocation: number of collocation points
+        #     n_epochs: number of epochs
+        #     learning_rate: learning rate
+        #     lambda_physics: physics loss weight
+        #     lambda_ic: initial condition loss weight
+        #     lambda_data: data loss weight
+        #     n_data_points: number of data points per parameter set
+        #     print_every: print every N epochs
+        #     patience: number of epochs to wait for validation improvement before early stopping
         print("=" * 80)
         print("MULTI-PARAMETER BRUSSELATOR PINN TRAINING")
         print("=" * 80)
@@ -537,9 +532,7 @@ class MultiParamBrusselatorPINN:
         if warmup_epochs > 0:
             print(f"  Learning rate warmup: {warmup_epochs} epochs")
         
-        # ============================================================
-        # RESUME FROM CHECKPOINT (if available and auto_resume is True)
-        # ============================================================
+        # Resume from checkpoint (if available and auto_resume is True)
         start_epoch = 0
         resumed_from_checkpoint = False
         
@@ -874,7 +867,7 @@ class MultiParamBrusselatorPINN:
         return x_pred, y_pred
     
     def plot_final_results(self):
-        """Plot comprehensive final results (called once after training)"""
+        # Plot comprehensive final results (called once after training)
         print("\nGenerating final plots...")
         
         # Select subset of parameter sets to plot (max 6 for readability)
@@ -1042,7 +1035,7 @@ class MultiParamBrusselatorPINN:
         print("All plots saved successfully!")
     
     def evaluate(self, param_sets, set_name="Test"):
-        """Evaluate model on a set of parameters"""
+        # Evaluate model on a set of parameters
         print(f"\n{'=' * 80}")
         print(f"{set_name.upper()} SET EVALUATION")
         print(f"{'=' * 80}")
@@ -1091,7 +1084,7 @@ class MultiParamBrusselatorPINN:
         }
     
     def save_model(self, filename='brusselator_pinn_model.pth'):
-        """Save the trained model (current state)"""
+        # Save the trained model (current state)
         path = os.path.join(self.output_dir, filename)
         torch.save({
             'model_state_dict': self.model.state_dict(),
@@ -1106,7 +1099,7 @@ class MultiParamBrusselatorPINN:
         print(f"Model saved to {path}")
     
     def save_best_model(self, filename='brusselator_pinn_best_model.pth'):
-        """Save the best model (lowest validation loss)"""
+        # Save the best model (lowest validation loss)
         if self.best_model_state is None:
             print("Warning: No best model state available")
             return
@@ -1125,7 +1118,7 @@ class MultiParamBrusselatorPINN:
         print(f"Best model saved to {path} (epoch {self.best_epoch}, val_loss={self.best_val_loss:.6e})")
     
     def save_training_summary(self, filename='training_summary.json'):
-        """Save training summary to JSON"""
+        # Save training summary to JSON
         path = os.path.join(self.output_dir, filename)
         summary = {
             'n_train_params': len(self.param_sets_train),
@@ -1144,7 +1137,7 @@ class MultiParamBrusselatorPINN:
         print(f"Training summary saved to {path}")
     
     def save_checkpoint_on_interrupt(self):
-        """Emergency save when job is being terminated - saves everything important"""
+        # Emergency save when job is being terminated - saves everything important
         print("\n" + "="*80)
         print("EMERGENCY CHECKPOINT - Saving all progress before termination")
         print("="*80)
@@ -1212,10 +1205,9 @@ class MultiParamBrusselatorPINN:
             traceback.print_exc()
     
     def save_resume_checkpoint(self, epoch, optimizer, scheduler, scheduler_type, filename='training_checkpoint.pth'):
-        """
-        Save a full checkpoint that can be used to resume training.
-        Contains all state needed to continue from this exact point.
-        """
+        # Save a full checkpoint that can be used to resume training.
+        # Contains all state needed to continue from this exact point.
+        
         path = os.path.join(self.output_dir, filename)
         checkpoint = {
             # Training state
@@ -1248,13 +1240,10 @@ class MultiParamBrusselatorPINN:
         return path
     
     def load_resume_checkpoint(self, filename='training_checkpoint.pth'):
-        """
-        Load a checkpoint to resume training.
-        Returns checkpoint dict if found, None otherwise.
-        
-        Handles older checkpoint formats gracefully by using .get() with defaults
-        for optional fields.
-        """
+        # Load a checkpoint to resume training.
+        # Returns checkpoint dict if found, None otherwise.
+        # Handles older checkpoint formats gracefully by using .get() with defaults
+        # for optional fields.
         path = os.path.join(self.output_dir, filename)
         if not os.path.exists(path):
             return None
@@ -1332,7 +1321,7 @@ class MultiParamBrusselatorPINN:
             return None
     
     def plot_loss_history(self):
-        """Plot and save just the loss history (can be called during training)"""
+        # Plot and save just the loss history (can be called during training)
         if len(self.loss_history['train_total']) == 0:
             print("No loss history to plot")
             return
@@ -1390,8 +1379,7 @@ class MultiParamBrusselatorPINN:
 
 
 def main():
-    """Main training script for multi-parameter PINN with large dataset"""
-    
+    # Main training script for multi-parameter PINN with large dataset
     # Try to import configuration, fallback to defaults if not found
     try:
         import config

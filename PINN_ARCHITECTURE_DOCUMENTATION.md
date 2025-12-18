@@ -15,8 +15,8 @@ dy/dt = Bx - x²y
 **Key Innovation:** Instead of solving for one parameter set at a time, the network learns a continuous function across the entire parameter space (A, B, x₀, y₀).
 
 **Training Data:**
-- 2,000 training parameter combinations
-- 400 validation parameter combinations  
+- 5,000 training parameter combinations
+- 1000 validation parameter combinations  
 - Parameter ranges: A ∈ [0.5, 2.5], B ∈ [1.0, 6.0], x₀ ∈ [0.0, 3.0], y₀ ∈ [0.0, 3.0]
 - Time domain: t ∈ [0, 20]
 
@@ -218,8 +218,8 @@ Main class that handles training and evaluation.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| N_TRAIN_SETS | 2000 | Training parameter combinations |
-| N_VAL_SETS | 400 | Validation parameter combinations |
+| N_TRAIN_SETS | 5000 | Training parameter combinations |
+| N_VAL_SETS | 1000 | Validation parameter combinations |
 | HIDDEN_LAYERS | [256]×6 | 6 layers × 256 neurons |
 | ACTIVATION | gelu | Activation function |
 | N_COLLOCATION | 1000 | Collocation points for physics loss |

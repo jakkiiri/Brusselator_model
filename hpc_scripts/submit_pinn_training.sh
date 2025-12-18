@@ -50,8 +50,6 @@ export MPLBACKEND=Agg
 # module load scipy
 
 # Activate Python virtual environment
-# Adjust this path to your actual virtual environment location
-# Make sure you've installed requirements: pip install -r hpc_scripts/requirements.txt
 source $HOME/projects/aip-yuweilai/jackyli/Brusselator_PINN/brusselator_venv/bin/activate || echo "WARNING: Could not activate virtual environment"
 
 # Verify environment

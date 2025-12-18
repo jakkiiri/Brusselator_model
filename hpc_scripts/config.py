@@ -1,11 +1,7 @@
-"""
-Configuration file for Brusselator PINN training
-Modify these parameters without changing the main training script
-"""
+# Configuration file for Brusselator PINN training
+# Modify these parameters without changing the main training script
 
-# ============================================================================
 # DATASET CONFIGURATION
-# ============================================================================
 
 # Number of parameter sets
 N_TRAIN_SETS = 5000   # Training parameter combinations 
@@ -26,9 +22,7 @@ TRAIN_SEED = 42
 VAL_SEED = 123
 
 
-# ============================================================================
 # NETWORK ARCHITECTURE
-# ============================================================================
 
 # Hidden layer sizes (list of integers)
 HIDDEN_LAYERS = [256, 256, 256, 256, 256, 256]  # 6 layers x 256 neurons (was 128 - too small!)
@@ -37,9 +31,7 @@ HIDDEN_LAYERS = [256, 256, 256, 256, 256, 256]  # 6 layers x 256 neurons (was 12
 ACTIVATION = 'gelu'  # GELU often works better than tanh for PINNs
 
 
-# ============================================================================
 # TRAINING CONFIGURATION
-# ============================================================================
 
 # Physics constraints
 N_COLLOCATION = 1000    # Number of collocation points for physics loss
@@ -98,16 +90,12 @@ LR_MIN = 1e-5                  # Minimum learning rate
 GRAD_CLIP_NORM = 1.0    # Maximum gradient norm (prevents exploding gradients)
 
 
-# ============================================================================
 # EARLY STOPPING
-# ============================================================================
 
 PATIENCE = 50000         # Epochs to wait for validation improvement before stopping
 
 
-# ============================================================================
 # LOGGING AND OUTPUT
-# ============================================================================
 
 # Console output
 PRINT_EVERY = 10        # Print detailed training progress every N epochs (was 100)
@@ -126,9 +114,7 @@ RESUME_CHECKPOINT_FILENAME = 'training_checkpoint.pth'  # Full state for resumpt
 AUTO_RESUME = True  # Automatically resume from checkpoint if found
 
 
-# ============================================================================
 # EVALUATION
-# ============================================================================
 
 # Number of parameter sets to evaluate in detail (subset of train/val for speed)
 N_EVAL_TRAIN = 100
@@ -145,9 +131,7 @@ N_PLOT_POINTS = 1000
 N_EVAL_POINTS = 200
 
 
-# ============================================================================
 # HARDWARE CONFIGURATION
-# ============================================================================
 
 # Device selection
 # Options: 'auto' (automatically selects CUDA if available), 'cuda', 'cpu'
@@ -157,9 +141,7 @@ DEVICE = 'auto'
 NUM_WORKERS = 4
 
 
-# ============================================================================
 # ADVANCED OPTIONS
-# ============================================================================
 
 # Use mixed precision training (faster on modern GPUs, requires torch >= 1.6)
 USE_AMP = False  # Set to True for A100/H100 GPUs
@@ -174,56 +156,4 @@ VERBOSE = True
 
 # DPI for saved plots
 PLOT_DPI = 300
-
-
-# ============================================================================
-# NOTES
-# ============================================================================
-
-"""
-Recommended configurations for different use cases:
-
-1. QUICK TEST (Fast training to verify setup):
-   N_TRAIN_SETS = 100
-   N_VAL_SETS = 20
-   N_EPOCHS = 5000
-   PATIENCE = 100
-
-2. SMALL SCALE (Good for debugging):
-   N_TRAIN_SETS = 500
-   N_VAL_SETS = 100
-   N_EPOCHS = 20000
-   PATIENCE = 300
-
-3. STANDARD (Default, balanced performance):
-   N_TRAIN_SETS = 5000
-   N_VAL_SETS = 1000
-   N_EPOCHS = 50000
-   PATIENCE = 500
-
-4. LARGE SCALE (Maximum generalization):
-   N_TRAIN_SETS = 10000
-   N_VAL_SETS = 2000
-   N_EPOCHS = 100000
-   PATIENCE = 1000
-   BATCH_SIZE = 100
-   DATA_BATCH_SIZE = 10000
-   N_PARAMS_PER_EPOCH = 200
-   N_COLLOCATION = 5000
-   N_DATA_POINTS = 100
-
-5. LOW MEMORY (For limited GPU memory):
-   N_COLLOCATION = 1000
-   N_DATA_POINTS = 30
-   BATCH_SIZE = 20
-   DATA_BATCH_SIZE = 2000
-   N_PARAMS_PER_EPOCH = 50
-   HIDDEN_LAYERS = [64, 64, 64, 64]
-
-6. HIGH ACCURACY (More capacity, longer training):
-   HIDDEN_LAYERS = [256, 256, 256, 256, 256, 256]
-   LAMBDA_IC = 200.0
-   LAMBDA_DATA = 20.0
-   LEARNING_RATE = 1e-4
-"""
 
