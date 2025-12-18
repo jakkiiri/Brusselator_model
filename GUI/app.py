@@ -3,6 +3,10 @@
 
 import streamlit as st
 import numpy as np
+import warnings
+# Suppress numpy overflow warnings (handled gracefully in code)
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*overflow.*')
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*invalid value.*')
 import matplotlib
 matplotlib.use('Agg')  # Set non-interactive backend before importing pyplot
 import matplotlib.pyplot as plt
@@ -193,7 +197,7 @@ st.markdown("""
 
 # THEME DETECTION FOR MATPLOTLIB
 def get_plot_theme():
-    """Detect theme and return appropriate plot colors"""
+    # Detect theme and return appropriate plot colors
     # Try to detect Streamlit theme from config
     try:
         theme_base = st.get_option("theme.base")
@@ -329,14 +333,14 @@ DT_OPTIONS = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2]
 
 @st.cache_resource
 def load_pinn_model():
-    """Load the PINN model (cached)"""
+    # Load the PINN model (cached)
     model_path = os.path.join(PARENT_DIR, "PINN", "brusselator_pinn.pth")
     if os.path.exists(model_path):
         return BrusselatorPINNSolver(model_path)
     return None
 
 def run_solver(solver_name, A, B, x0, y0, dt, T):
-    """Run a solver and return results with timing info"""
+    # Run a solver and return results with timing info
     if solver_name == "Euler":
         start = time.perf_counter()
         t, x, y, step_times = euler_solve(A, B, x0, y0, dt, T, record_step_times=True)
@@ -408,7 +412,7 @@ def run_solver(solver_name, A, B, x0, y0, dt, T):
     return None
 
 def compute_ground_truth(A, B, x0, y0, T):
-    """Compute ground truth using RK4 at very small dt"""
+    # Compute ground truth using RK4 at very small dt
     start = time.perf_counter()
     t, x, y, _ = rk4_solve(A, B, x0, y0, GROUND_TRUTH_DT, T, record_step_times=False)
     elapsed = time.perf_counter() - start
@@ -423,25 +427,63 @@ def compute_ground_truth(A, B, x0, y0, T):
     }
 
 def compute_mse(result, ground_truth):
-    """Compute MSE between a solver result and ground truth"""
+    # Compute MSE between a solver result and ground truth
+    # Maximum reasonable MSE threshold - anything above this is considered overflow/unstable
+    MAX_REASONABLE_MSE = 1e10
+    MAX_REASONABLE_VALUE = 1e100  # Max reasonable solution value
+    
+    # Check for NaN or Inf in result (numerical overflow)
+    if np.any(np.isnan(result['x'])) or np.any(np.isnan(result['y'])) or \
+       np.any(np.isinf(result['x'])) or np.any(np.isinf(result['y'])):
+        return {
+            "mse_x": np.inf,
+            "mse_y": np.inf,
+            "mse_total": np.inf,
+            "rmse_total": np.inf,
+            "overflow": True
+        }
+    
+    # Check for extremely large values (not inf but effectively overflow)
+    if np.any(np.abs(result['x']) > MAX_REASONABLE_VALUE) or \
+       np.any(np.abs(result['y']) > MAX_REASONABLE_VALUE):
+        return {
+            "mse_x": np.inf,
+            "mse_y": np.inf,
+            "mse_total": np.inf,
+            "rmse_total": np.inf,
+            "overflow": True
+        }
+    
     # Interpolate solver result to ground truth time points
     x_interp = np.interp(ground_truth['t'], result['t'], result['x'])
     y_interp = np.interp(ground_truth['t'], result['t'], result['y'])
     
-    # Compute MSE
-    mse_x = np.mean((x_interp - ground_truth['x']) ** 2)
-    mse_y = np.mean((y_interp - ground_truth['y']) ** 2)
-    mse_total = (mse_x + mse_y) / 2
+    # Compute MSE with overflow protection
+    with np.errstate(over='ignore', invalid='ignore'):
+        mse_x = np.mean((x_interp - ground_truth['x']) ** 2)
+        mse_y = np.mean((y_interp - ground_truth['y']) ** 2)
+        mse_total = (mse_x + mse_y) / 2
+    
+    # Check for overflow in MSE calculation (including very large values)
+    if np.isnan(mse_total) or np.isinf(mse_total) or mse_total > MAX_REASONABLE_MSE:
+        return {
+            "mse_x": np.inf,
+            "mse_y": np.inf,
+            "mse_total": np.inf,
+            "rmse_total": np.inf,
+            "overflow": True
+        }
     
     return {
         "mse_x": mse_x,
         "mse_y": mse_y,
         "mse_total": mse_total,
-        "rmse_total": np.sqrt(mse_total)
+        "rmse_total": np.sqrt(mse_total),
+        "overflow": False
     }
 
 def get_accuracy_class(mse):
-    """Get CSS class based on MSE value"""
+    # Get CSS class based on MSE value
     if mse < 1e-6:
         return "accuracy-excellent"
     elif mse < 1e-4:
@@ -452,7 +494,7 @@ def get_accuracy_class(mse):
         return "accuracy-poor"
 
 def get_accuracy_label(mse):
-    """Get label based on MSE value"""
+    # Get label based on MSE value
     if mse < 1e-6:
         return "Excellent"
     elif mse < 1e-4:
@@ -462,231 +504,172 @@ def get_accuracy_label(mse):
     else:
         return "Poor"
 
-# MAIN CONTENT
-if len(selected_solvers) >= 2:
-    
-    st.markdown("---")
-    st.markdown("## 🛠️ Solver Configuration")
-    st.markdown("Configure the time step for each traditional solver:")
-    
-    # Create solver configuration cards on main page
-    solver_dts = {}
-    
-    # Determine number of columns based on selected solvers
-    n_traditional = sum(1 for s in selected_solvers if s != "PINN")
-    n_pinn = 1 if "PINN" in selected_solvers else 0
-    
-    cols = st.columns(len(selected_solvers))
-    
-    for i, solver_name in enumerate(selected_solvers):
-        with cols[i]:
-            color = SOLVER_COLORS[solver_name]
-            
-            if solver_name == "PINN":
-                st.markdown(f"""
-                <div class="solver-config-card" style="border-left: 4px solid {color};">
-                    <h4 style="color: {color}; margin: 0;">🧠 {solver_name}</h4>
-                </div>
-                """, unsafe_allow_html=True)
-                st.markdown("**Method:** Neural Network")
-                st.markdown("**Points:** 1,000 (fixed)")
-                st.markdown("*No time step needed*")
-                solver_dts[solver_name] = None
-            else:
-                st.markdown(f"""
-                <div class="solver-config-card" style="border-left: 4px solid {color};">
-                    <h4 style="color: {color}; margin: 0;">📊 {solver_name}</h4>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                dt = st.select_slider(
-                    f"Time Step (dt)",
-                    options=DT_OPTIONS,
-                    value=0.01,
-                    key=f"dt_{solver_name}",
-                    help=f"Time step for {solver_name} method"
-                )
-                solver_dts[solver_name] = dt
-                
-                n_steps = int(np.ceil(T / dt))
-                st.markdown(f"**Steps:** {n_steps:,}")
-    
-    st.markdown("---")
-    
-    # Run button
-    if st.button("🚀 Run Comparison", type="primary", width="stretch"):
+# MAIN CONTENT - TAB STRUCTURE
+main_tab1, main_tab2 = st.tabs(["🔬 Single Comparison", "🌍 Global Comparison"])
+
+# TAB 1: SINGLE COMPARISON (Original functionality)
+with main_tab1:
+    if len(selected_solvers) >= 2:
         
-        results = []
+        st.markdown("---")
+        st.markdown("## 🛠️ Solver Configuration")
+        st.markdown("Configure the time step for each traditional solver:")
         
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        # Create solver configuration cards on main page
+        solver_dts = {}
         
-        # First, compute ground truth
-        status_text.text("Computing ground truth (RK4 @ dt=0.001)...")
-        ground_truth = compute_ground_truth(A, B, x0, y0, T)
-        progress_bar.progress(0.2)
+        # Determine number of columns based on selected solvers
+        n_traditional = sum(1 for s in selected_solvers if s != "PINN")
+        n_pinn = 1 if "PINN" in selected_solvers else 0
         
-        # Run each selected solver
-        total_solvers = len(selected_solvers)
+        cols = st.columns(len(selected_solvers))
+        
         for i, solver_name in enumerate(selected_solvers):
-            status_text.text(f"Running {solver_name}...")
-            dt = solver_dts.get(solver_name, 0.01)
-            result = run_solver(solver_name, A, B, x0, y0, dt, T)
-            if result is not None:
-                # Compute accuracy metrics
-                accuracy = compute_mse(result, ground_truth)
-                result['accuracy'] = accuracy
-                results.append(result)
-            progress_bar.progress(0.2 + 0.8 * (i + 1) / total_solvers)
-        
-        status_text.text("Complete!")
-        time.sleep(0.3)
-        progress_bar.empty()
-        status_text.empty()
-        
-        if results:
-            # Store results in session state
-            st.session_state['results'] = results
-            st.session_state['ground_truth'] = ground_truth
-            st.session_state['params'] = {'A': A, 'B': B, 'x0': x0, 'y0': y0}
-            st.session_state['solver_dts'] = solver_dts
-    
-    # Display results if available
-    if 'results' in st.session_state and 'ground_truth' in st.session_state:
-        results = st.session_state['results']
-        ground_truth = st.session_state['ground_truth']
-        params = st.session_state['params']
-        solver_dts = st.session_state['solver_dts']
-        
-        # PERFORMANCE METRICS
-        st.markdown("## ⏱️ Performance Metrics")
-        
-        cols = st.columns(len(results))
-        
-        for i, result in enumerate(results):
             with cols[i]:
-                solver_class = result['name'].lower().replace(" ", "-").split('-')[0]
-                color = SOLVER_COLORS[result['name']]
+                color = SOLVER_COLORS[solver_name]
                 
-                st.markdown(f"""
-                <div class="metric-card solver-{solver_class}">
-                    <div class="metric-label">{result['name']}</div>
-                    <div class="metric-value">{result['total_time']*1000:.3f} ms</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if result['n_steps'] is not None:
-                    st.markdown(f"**Steps:** {result['n_steps']:,}")
-                    st.markdown(f"**Time/Step:** {result['time_per_step']*1e6:.2f} μs")
-                    st.markdown(f"**dt:** {result['dt']}")
-                else:
+                if solver_name == "PINN":
+                    st.markdown(f"""
+                    <div class="solver-config-card" style="border-left: 4px solid {color};">
+                        <h4 style="color: {color}; margin: 0;">🧠 {solver_name}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
                     st.markdown("**Method:** Neural Network")
-                    st.markdown("**Points:** 1,000")
+                    st.markdown("**Points:** 1,000 (fixed)")
+                    st.markdown("*No time step needed*")
+                    solver_dts[solver_name] = None
+                else:
+                    st.markdown(f"""
+                    <div class="solver-config-card" style="border-left: 4px solid {color};">
+                        <h4 style="color: {color}; margin: 0;">📊 {solver_name}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    dt = st.select_slider(
+                        f"Time Step (dt)",
+                        options=DT_OPTIONS,
+                        value=0.01,
+                        key=f"dt_{solver_name}",
+                        help=f"Time step for {solver_name} method"
+                    )
+                    solver_dts[solver_name] = dt
+                    
+                    n_steps = int(np.ceil(T / dt))
+                    st.markdown(f"**Steps:** {n_steps:,}")
         
-        # ACCURACY METRICS
         st.markdown("---")
-        st.markdown("## 🎯 Accuracy Metrics")
-        st.markdown(f"*Compared against ground truth: RK4 @ dt={GROUND_TRUTH_DT} ({ground_truth['n_steps']:,} steps)*")
         
-        cols = st.columns(len(results))
+        # Run button
+        if st.button("🚀 Run Comparison", type="primary", key="single_run", width='stretch'):
+            
+            results = []
+            
+            # Progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # First, compute ground truth
+            status_text.text("Computing ground truth (RK4 @ dt=0.001)...")
+            ground_truth = compute_ground_truth(A, B, x0, y0, T)
+            progress_bar.progress(0.2)
+            
+            # Run each selected solver
+            total_solvers = len(selected_solvers)
+            for i, solver_name in enumerate(selected_solvers):
+                status_text.text(f"Running {solver_name}...")
+                dt = solver_dts.get(solver_name, 0.01)
+                result = run_solver(solver_name, A, B, x0, y0, dt, T)
+                if result is not None:
+                    # Compute accuracy metrics
+                    accuracy = compute_mse(result, ground_truth)
+                    result['accuracy'] = accuracy
+                    results.append(result)
+                progress_bar.progress(0.2 + 0.8 * (i + 1) / total_solvers)
+            
+            status_text.text("Complete!")
+            time.sleep(0.3)
+            progress_bar.empty()
+            status_text.empty()
+            
+            if results:
+                # Store results in session state
+                st.session_state['results'] = results
+                st.session_state['ground_truth'] = ground_truth
+                st.session_state['params'] = {'A': A, 'B': B, 'x0': x0, 'y0': y0}
+                st.session_state['solver_dts'] = solver_dts
         
-        for i, result in enumerate(results):
-            with cols[i]:
-                acc = result['accuracy']
-                acc_class = get_accuracy_class(acc['mse_total'])
-                acc_label = get_accuracy_label(acc['mse_total'])
-                color = SOLVER_COLORS[result['name']]
+        # Display results if available
+        if 'results' in st.session_state and 'ground_truth' in st.session_state:
+            results = st.session_state['results']
+            ground_truth = st.session_state['ground_truth']
+            params = st.session_state['params']
+            solver_dts = st.session_state['solver_dts']
+            
+            # PERFORMANCE METRICS
+            st.markdown("## ⏱️ Performance Metrics")
+            
+            cols = st.columns(len(results))
+            
+            for i, result in enumerate(results):
+                with cols[i]:
+                    solver_class = result['name'].lower().replace(" ", "-").split('-')[0]
+                    color = SOLVER_COLORS[result['name']]
+                    
+                    st.markdown(f"""
+                    <div class="metric-card solver-{solver_class}">
+                        <div class="metric-label">{result['name']}</div>
+                        <div class="metric-value">{result['total_time']*1000:.3f} ms</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if result['n_steps'] is not None:
+                        st.markdown(f"**Steps:** {result['n_steps']:,}")
+                        st.markdown(f"**Time/Step:** {result['time_per_step']*1e6:.2f} μs")
+                        st.markdown(f"**dt:** {result['dt']}")
+                    else:
+                        st.markdown("**Method:** Neural Network")
+                        st.markdown("**Points:** 1,000")
+            
+            # ACCURACY METRICS
+            st.markdown("---")
+            st.markdown("## 🎯 Accuracy Metrics")
+            st.markdown(f"*Compared against ground truth: RK4 @ dt={GROUND_TRUTH_DT} ({ground_truth['n_steps']:,} steps)*")
+            
+            cols = st.columns(len(results))
+            
+            for i, result in enumerate(results):
+                with cols[i]:
+                    acc = result['accuracy']
+                    acc_class = get_accuracy_class(acc['mse_total'])
+                    acc_label = get_accuracy_label(acc['mse_total'])
+                    color = SOLVER_COLORS[result['name']]
+                    
+                    st.markdown(f"""
+                    <div class="metric-card" style="border-left: 4px solid {color};">
+                        <div class="metric-label">{result['name']} - MSE</div>
+                        <div class="metric-value {acc_class}">{acc['mse_total']:.2e}</div>
+                        <div style="color: var(--text-secondary); font-size: 0.85rem;">Rating: <span class="{acc_class}">{acc_label}</span></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"**MSE (x):** {acc['mse_x']:.2e}")
+                    st.markdown(f"**MSE (y):** {acc['mse_y']:.2e}")
+                    st.markdown(f"**RMSE:** {acc['rmse_total']:.2e}")
+            
+            # SOLUTION COMPARISON WITH GROUND TRUTH
+            st.markdown("---")
+            st.markdown("## 📈 Solution Comparison")
+            
+            # Create tabs for different views
+            tab1, tab2, tab3 = st.tabs(["📊 All Solvers", "🔍 Individual vs Ground Truth", "🌀 Phase Portrait"])
+            
+            with tab1:
+                # All solvers comparison
+                theme = get_plot_theme()
+                fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+                fig.patch.set_facecolor(theme["bg_primary"])
                 
-                st.markdown(f"""
-                <div class="metric-card" style="border-left: 4px solid {color};">
-                    <div class="metric-label">{result['name']} - MSE</div>
-                    <div class="metric-value {acc_class}">{acc['mse_total']:.2e}</div>
-                    <div style="color: var(--text-secondary); font-size: 0.85rem;">Rating: <span class="{acc_class}">{acc_label}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown(f"**MSE (x):** {acc['mse_x']:.2e}")
-                st.markdown(f"**MSE (y):** {acc['mse_y']:.2e}")
-                st.markdown(f"**RMSE:** {acc['rmse_total']:.2e}")
-        
-        # SOLUTION COMPARISON WITH GROUND TRUTH
-        st.markdown("---")
-        st.markdown("## 📈 Solution Comparison")
-        
-        # Create tabs for different views
-        tab1, tab2, tab3 = st.tabs(["📊 All Solvers", "🔍 Individual vs Ground Truth", "🌀 Phase Portrait"])
-        
-        with tab1:
-            # All solvers comparison
-            theme = get_plot_theme()
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            fig.patch.set_facecolor(theme["bg_primary"])
-            
-            for ax in axes:
-                ax.set_facecolor(theme["bg_secondary"])
-                ax.tick_params(colors=theme["text_secondary"])
-                for spine in ax.spines.values():
-                    spine.set_color(theme["border_color"])
-                ax.xaxis.label.set_color(theme["text_color"])
-                ax.yaxis.label.set_color(theme["text_color"])
-                ax.title.set_color(theme["text_color"])
-                ax.grid(True, alpha=0.3, color=theme["grid_color"])
-            
-            # Plot ground truth
-            axes[0].plot(ground_truth['t'], ground_truth['x'], 
-                        color=SOLVER_COLORS['Ground Truth'], 
-                        linewidth=2.5, 
-                        label='Ground Truth',
-                        alpha=0.5)
-            axes[1].plot(ground_truth['t'], ground_truth['y'], 
-                        color=SOLVER_COLORS['Ground Truth'], 
-                        linewidth=2.5, 
-                        label='Ground Truth',
-                        alpha=0.5)
-            
-            # Plot each solver
-            for result in results:
-                axes[0].plot(result['t'], result['x'], 
-                            color=SOLVER_COLORS[result['name']], 
-                            linestyle=SOLVER_STYLES[result['name']],
-                            linewidth=2, 
-                            label=result['name'],
-                            alpha=0.9)
-                axes[1].plot(result['t'], result['y'], 
-                            color=SOLVER_COLORS[result['name']], 
-                            linestyle=SOLVER_STYLES[result['name']],
-                            linewidth=2, 
-                            label=result['name'],
-                            alpha=0.9)
-            
-            axes[0].set_xlabel('Time (t)', fontsize=11)
-            axes[0].set_ylabel('x(t)', fontsize=11)
-            axes[0].set_title('Concentration x vs Time', fontsize=12, fontweight='bold')
-            axes[0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
-            
-            axes[1].set_xlabel('Time (t)', fontsize=11)
-            axes[1].set_ylabel('y(t)', fontsize=11)
-            axes[1].set_title('Concentration y vs Time', fontsize=12, fontweight='bold')
-            axes[1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
-            
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
-        
-        with tab2:
-            # Individual solver vs ground truth
-            theme = get_plot_theme()
-            n_results = len(results)
-            fig, axes = plt.subplots(n_results, 2, figsize=(14, 4 * n_results))
-            fig.patch.set_facecolor(theme["bg_primary"])
-            
-            if n_results == 1:
-                axes = axes.reshape(1, -1)
-            
-            for idx, result in enumerate(results):
-                for col in range(2):
-                    ax = axes[idx, col]
+                for ax in axes:
                     ax.set_facecolor(theme["bg_secondary"])
                     ax.tick_params(colors=theme["text_secondary"])
                     for spine in ax.spines.values():
@@ -696,38 +679,529 @@ if len(selected_solvers) >= 2:
                     ax.title.set_color(theme["text_color"])
                     ax.grid(True, alpha=0.3, color=theme["grid_color"])
                 
-                # Plot x comparison
-                axes[idx, 0].plot(ground_truth['t'], ground_truth['x'], 
-                                 color=SOLVER_COLORS['Ground Truth'], 
-                                 linewidth=2, label='Ground Truth', alpha=0.7)
-                axes[idx, 0].plot(result['t'], result['x'], 
-                                 color=SOLVER_COLORS[result['name']], 
-                                 linewidth=2, label=result['name'], linestyle='--')
-                axes[idx, 0].set_xlabel('Time (t)')
-                axes[idx, 0].set_ylabel('x(t)')
-                axes[idx, 0].set_title(f"{result['name']} - x(t) | MSE: {result['accuracy']['mse_x']:.2e}", 
-                                       fontsize=11, fontweight='bold')
-                axes[idx, 0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                # Plot ground truth
+                axes[0].plot(ground_truth['t'], ground_truth['x'], 
+                            color=SOLVER_COLORS['Ground Truth'], 
+                            linewidth=2.5, 
+                            label='Ground Truth',
+                            alpha=0.5)
+                axes[1].plot(ground_truth['t'], ground_truth['y'], 
+                            color=SOLVER_COLORS['Ground Truth'], 
+                            linewidth=2.5, 
+                            label='Ground Truth',
+                            alpha=0.5)
                 
-                # Plot y comparison
-                axes[idx, 1].plot(ground_truth['t'], ground_truth['y'], 
-                                 color=SOLVER_COLORS['Ground Truth'], 
-                                 linewidth=2, label='Ground Truth', alpha=0.7)
-                axes[idx, 1].plot(result['t'], result['y'], 
-                                 color=SOLVER_COLORS[result['name']], 
-                                 linewidth=2, label=result['name'], linestyle='--')
-                axes[idx, 1].set_xlabel('Time (t)')
-                axes[idx, 1].set_ylabel('y(t)')
-                axes[idx, 1].set_title(f"{result['name']} - y(t) | MSE: {result['accuracy']['mse_y']:.2e}", 
-                                       fontsize=11, fontweight='bold')
-                axes[idx, 1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                # Plot each solver
+                for result in results:
+                    axes[0].plot(result['t'], result['x'], 
+                                color=SOLVER_COLORS[result['name']], 
+                                linestyle=SOLVER_STYLES[result['name']],
+                                linewidth=2, 
+                                label=result['name'],
+                                alpha=0.9)
+                    axes[1].plot(result['t'], result['y'], 
+                                color=SOLVER_COLORS[result['name']], 
+                                linestyle=SOLVER_STYLES[result['name']],
+                                linewidth=2, 
+                                label=result['name'],
+                                alpha=0.9)
+                
+                axes[0].set_xlabel('Time (t)', fontsize=11)
+                axes[0].set_ylabel('x(t)', fontsize=11)
+                axes[0].set_title('Concentration x vs Time', fontsize=12, fontweight='bold')
+                axes[0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                
+                axes[1].set_xlabel('Time (t)', fontsize=11)
+                axes[1].set_ylabel('y(t)', fontsize=11)
+                axes[1].set_title('Concentration y vs Time', fontsize=12, fontweight='bold')
+                axes[1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close()
+            
+            with tab2:
+                # Individual solver vs ground truth
+                theme = get_plot_theme()
+                n_results = len(results)
+                fig, axes = plt.subplots(n_results, 2, figsize=(14, 4 * n_results))
+                fig.patch.set_facecolor(theme["bg_primary"])
+                
+                if n_results == 1:
+                    axes = axes.reshape(1, -1)
+                
+                for idx, result in enumerate(results):
+                    for col in range(2):
+                        ax = axes[idx, col]
+                        ax.set_facecolor(theme["bg_secondary"])
+                        ax.tick_params(colors=theme["text_secondary"])
+                        for spine in ax.spines.values():
+                            spine.set_color(theme["border_color"])
+                        ax.xaxis.label.set_color(theme["text_color"])
+                        ax.yaxis.label.set_color(theme["text_color"])
+                        ax.title.set_color(theme["text_color"])
+                        ax.grid(True, alpha=0.3, color=theme["grid_color"])
+                    
+                    # Plot x comparison
+                    axes[idx, 0].plot(ground_truth['t'], ground_truth['x'], 
+                                     color=SOLVER_COLORS['Ground Truth'], 
+                                     linewidth=2, label='Ground Truth', alpha=0.7)
+                    axes[idx, 0].plot(result['t'], result['x'], 
+                                     color=SOLVER_COLORS[result['name']], 
+                                     linewidth=2, label=result['name'], linestyle='--')
+                    axes[idx, 0].set_xlabel('Time (t)')
+                    axes[idx, 0].set_ylabel('x(t)')
+                    axes[idx, 0].set_title(f"{result['name']} - x(t) | MSE: {result['accuracy']['mse_x']:.2e}", 
+                                           fontsize=11, fontweight='bold')
+                    axes[idx, 0].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                    
+                    # Plot y comparison
+                    axes[idx, 1].plot(ground_truth['t'], ground_truth['y'], 
+                                     color=SOLVER_COLORS['Ground Truth'], 
+                                     linewidth=2, label='Ground Truth', alpha=0.7)
+                    axes[idx, 1].plot(result['t'], result['y'], 
+                                     color=SOLVER_COLORS[result['name']], 
+                                     linewidth=2, label=result['name'], linestyle='--')
+                    axes[idx, 1].set_xlabel('Time (t)')
+                    axes[idx, 1].set_ylabel('y(t)')
+                    axes[idx, 1].set_title(f"{result['name']} - y(t) | MSE: {result['accuracy']['mse_y']:.2e}", 
+                                           fontsize=11, fontweight='bold')
+                    axes[idx, 1].legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close()
+            
+            with tab3:
+                # Phase portrait
+                theme = get_plot_theme()
+                fig, ax = plt.subplots(figsize=(10, 8))
+                fig.patch.set_facecolor(theme["bg_primary"])
+                ax.set_facecolor(theme["bg_secondary"])
+                ax.tick_params(colors=theme["text_secondary"])
+                for spine in ax.spines.values():
+                    spine.set_color(theme["border_color"])
+                ax.xaxis.label.set_color(theme["text_color"])
+                ax.yaxis.label.set_color(theme["text_color"])
+                ax.title.set_color(theme["text_color"])
+                ax.grid(True, alpha=0.3, color=theme["grid_color"])
+                
+                # Plot ground truth
+                ax.plot(ground_truth['x'], ground_truth['y'], 
+                       color=SOLVER_COLORS['Ground Truth'], 
+                       linewidth=3, label='Ground Truth', alpha=0.4)
+                
+                # Plot each solver
+                for result in results:
+                    ax.plot(result['x'], result['y'], 
+                           color=SOLVER_COLORS[result['name']], 
+                           linestyle=SOLVER_STYLES[result['name']],
+                           linewidth=2, 
+                           label=result['name'],
+                           alpha=0.9)
+                    ax.plot(result['x'][0], result['y'][0], 'o', 
+                           color=SOLVER_COLORS[result['name']], 
+                           markersize=10)
+                
+                ax.set_xlabel('x', fontsize=12)
+                ax.set_ylabel('y', fontsize=12)
+                ax.set_title('Phase Portrait (x vs y)', fontsize=14, fontweight='bold')
+                ax.legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"], loc='best')
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close()
+            
+            # DETAILED COMPARISON TABLE
+            st.markdown("---")
+            st.markdown("## 📊 Detailed Comparison Table")
+            
+            comparison_data = []
+            for result in results:
+                # Convert all values to strings for consistent DataFrame serialization
+                row = {
+                    "Solver": str(result['name']),
+                    "dt": str(result['dt']) if result['dt'] is not None else "-",
+                    "Steps": str(f"{result['n_steps']:,}") if result['n_steps'] is not None else "-",
+                    "Total Time (ms)": str(f"{result['total_time']*1000:.4f}"),
+                    "Time/Step (μs)": str(f"{result['time_per_step']*1e6:.3f}") if result['time_per_step'] is not None else "-",
+                    "MSE (total)": str(f"{result['accuracy']['mse_total']:.2e}"),
+                    "MSE (x)": str(f"{result['accuracy']['mse_x']:.2e}"),
+                    "MSE (y)": str(f"{result['accuracy']['mse_y']:.2e}"),
+                    "RMSE": str(f"{result['accuracy']['rmse_total']:.2e}"),
+                    "Accuracy": str(get_accuracy_label(result['accuracy']['mse_total']))
+                }
+                comparison_data.append(row)
+            
+            df = pd.DataFrame(comparison_data)
+            st.dataframe(df, hide_index=True)
+            
+            # PARAMETER SUMMARY
+            st.markdown("---")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("### 📌 Model Parameters")
+                st.markdown(f"- **A** = {params['A']}")
+                st.markdown(f"- **B** = {params['B']}")
+                st.markdown(f"- **x₀** = {params['x0']}")
+                st.markdown(f"- **y₀** = {params['y0']}")
+            
+            with col2:
+                st.markdown("### ⚙️ Simulation Settings")
+                st.markdown(f"- **Time Range:** 0 - {T} s")
+                st.markdown(f"- **Ground Truth dt:** {GROUND_TRUTH_DT}")
+                st.markdown(f"- **Ground Truth Steps:** {ground_truth['n_steps']:,}")
+            
+            with col3:
+                st.markdown("### 🎛️ Solver Time Steps")
+                for solver, dt in solver_dts.items():
+                    if dt is not None:
+                        st.markdown(f"- **{solver}:** dt = {dt}")
+                    else:
+                        st.markdown(f"- **{solver}:** N/A (neural net)")
+
+    else:
+        st.info("👈 Select at least 2 solvers from the sidebar to begin comparison")
+        
+        # Show some info about the solvers
+        st.markdown("---")
+        st.markdown("## 📚 Available Solvers")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            ### 🔢 Traditional Numerical Methods
+            
+            **Euler's Method**
+            - First-order accuracy (O(h))
+            - Simplest numerical integrator
+            - Fast but less accurate
+            
+            **Improved Euler (Heun's Method)**
+            - Second-order accuracy (O(h²))
+            - Predictor-corrector approach
+            - Better stability than basic Euler
+            
+            **RK4 (Runge-Kutta 4th Order)**
+            - Fourth-order accuracy (O(h⁴))
+            - Industry standard for ODEs
+            - Excellent balance of speed and accuracy
+            """)
+        
+        with col2:
+            st.markdown("""
+            ### 🧠 Machine Learning Method
+            
+            **PINN (Physics-Informed Neural Network)**
+            - Neural network trained on Brusselator physics
+            - Learns the solution manifold
+            - Fast inference after training
+            - Handles parameter variations
+            
+            **Model Details:**
+            - 8 hidden layers (128 neurons each)
+            - Inputs: t, A, B, x₀, y₀
+            - Outputs: x(t), y(t)
+            """)
+        
+        st.markdown("---")
+        st.markdown("### 🎯 Accuracy Evaluation")
+        st.markdown("""
+        All solvers are compared against a **ground truth** solution computed using **RK4 at dt=0.001**.
+        
+        This provides ~20,000 steps with 4th-order accuracy, giving an essentially exact reference solution.
+        
+        **Accuracy Ratings:**
+        - 🟢 **Excellent**: MSE < 10⁻⁶
+        - 🟡 **Good**: MSE < 10⁻⁴
+        - 🟠 **Moderate**: MSE < 10⁻²
+        - 🔴 **Poor**: MSE ≥ 10⁻²
+        """)
+
+# TAB 2: GLOBAL COMPARISON
+with main_tab2:
+    st.markdown("## 🌍 Global Solver Comparison")
+    st.markdown("Compare all solvers across multiple random parameter sets to evaluate average performance.")
+    
+    st.markdown("---")
+    
+    # Configuration
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### ⚙️ Comparison Settings")
+        n_param_sets = st.number_input(
+            "Number of Parameter Sets",
+            min_value=10,
+            max_value=10000,
+            value=100,
+            step=10,
+            help="Number of random parameter sets to test (10-10000)"
+        )
+        st.markdown("<style>div[data-testid='stNumberInput'] { width: 100% !important; }</style>", unsafe_allow_html=True)
+        
+        global_dt = st.select_slider(
+            "Time Step (dt) for Numerical Methods",
+            options=DT_OPTIONS,
+            value=0.01,
+            key="global_dt",
+            help="Time step used for Euler, Improved Euler, and RK4"
+        )
+    
+    with col2:
+        st.markdown("### 📊 Parameter Ranges")
+        st.markdown("""
+        Random parameters will be sampled from:
+        - **A**: 0.5 - 2.5
+        - **B**: 1.0 - 6.0
+        - **x₀**: 0.0 - 3.0
+        - **y₀**: 0.0 - 3.0
+        
+        **Ground Truth**: RK4 @ dt=0.001
+        """)
+    
+    st.markdown("---")
+    
+    # Run Global Comparison button
+    if st.button("🚀 Run Global Comparison", type="primary", key="global_run", width='stretch'):
+        
+        # Generate random parameter sets
+        np.random.seed(42)  # For reproducibility
+        param_sets = []
+        for _ in range(n_param_sets):
+            param_sets.append({
+                'A': np.random.uniform(0.5, 2.5),
+                'B': np.random.uniform(1.0, 6.0),
+                'x0': np.random.uniform(0.0, 3.0),
+                'y0': np.random.uniform(0.0, 3.0)
+            })
+        
+        # Initialize results storage
+        all_solvers = ["Euler", "Improved Euler", "RK4", "PINN"]
+        global_results = {solver: {'times': [], 'mses': []} for solver in all_solvers}
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Run comparison for each parameter set
+        for i, params in enumerate(param_sets):
+            status_text.text(f"Processing parameter set {i+1}/{n_param_sets}...")
+            
+            # Compute ground truth
+            gt = compute_ground_truth(params['A'], params['B'], params['x0'], params['y0'], T)
+            
+            # Run each solver
+            for solver_name in all_solvers:
+                dt = global_dt if solver_name != "PINN" else None
+                result = run_solver(solver_name, params['A'], params['B'], params['x0'], params['y0'], dt, T)
+                
+                if result is not None:
+                    # Compute MSE
+                    accuracy = compute_mse(result, gt)
+                    # Only include results that didn't overflow
+                    if not accuracy.get('overflow', False) and not np.isinf(accuracy['mse_total']):
+                        global_results[solver_name]['times'].append(result['total_time'])
+                        global_results[solver_name]['mses'].append(accuracy['mse_total'])
+            
+            progress_bar.progress((i + 1) / n_param_sets)
+        
+        status_text.text("Complete!")
+        time.sleep(0.3)
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Store results in session state (use different key than widget key)
+        st.session_state['global_results'] = global_results
+        st.session_state['global_n_sets'] = n_param_sets
+        st.session_state['global_dt_value'] = global_dt
+        st.session_state['global_param_sets'] = param_sets
+    
+    # Display global results if available
+    if 'global_results' in st.session_state:
+        global_results = st.session_state['global_results']
+        n_sets = st.session_state['global_n_sets']
+        g_dt = st.session_state['global_dt_value']
+        param_sets = st.session_state['global_param_sets']
+        
+        st.markdown("## 📊 Global Comparison Results")
+        
+        # Count valid samples per solver
+        valid_counts = {s: len(global_results[s]['mses']) for s in ["Euler", "Improved Euler", "RK4", "PINN"]}
+        min_valid = min(valid_counts.values())
+        skipped = n_sets - min_valid
+        
+        st.markdown(f"*Averaged over {n_sets} random parameter sets | Numerical methods dt={g_dt}*")
+        
+        # Show info about skipped samples due to numerical overflow
+        if skipped > 0:
+            st.info(f"ℹ️ **Note:** {skipped} parameter set(s) were excluded due to numerical overflow (unstable dynamics). This is normal for certain parameter combinations.")
+        
+        # Add warning for low sample sizes
+        if min_valid < 1000:
+            st.warning("⚠️ **Low Sample Size:** With fewer than 1000 valid parameter sets, standard deviations may be high and results less reliable. Consider running with more sets for statistically robust comparisons.")
+        
+        # Summary statistics
+        st.markdown("### 📈 Average Performance Metrics")
+        
+        cols = st.columns(4)
+        all_solvers = ["Euler", "Improved Euler", "RK4", "PINN"]
+        
+        # Define accuracy colors for visual feedback
+        def get_accuracy_color(mse):
+            if mse < 1e-6:
+                return "#00cc66"  # Green - Excellent
+            elif mse < 1e-4:
+                return "#ccaa00"  # Yellow - Good
+            elif mse < 1e-2:
+                return "#ff8800"  # Orange - Moderate
+            else:
+                return "#ff5555"  # Red - Poor
+        
+        for i, solver_name in enumerate(all_solvers):
+            with cols[i]:
+                times = global_results[solver_name]['times']
+                mses = global_results[solver_name]['mses']
+                
+                if times and mses:
+                    avg_time = np.mean(times) * 1000  # Convert to ms
+                    std_time = np.std(times) * 1000
+                    avg_mse = np.mean(mses)
+                    std_mse = np.std(mses)
+                    
+                    color = SOLVER_COLORS[solver_name]
+                    acc_color = get_accuracy_color(avg_mse)
+                    acc_label = get_accuracy_label(avg_mse)
+                    
+                    # Use native Streamlit metrics with custom styling
+                    st.markdown(f"""
+<div style="background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card-end) 100%); 
+            border-radius: 12px; padding: 1.2rem; border-left: 4px solid {color};
+            box-shadow: 0 4px 20px var(--shadow-color);">
+    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; 
+                letter-spacing: 1px; margin-bottom: 0.8rem; font-weight: 600;">{solver_name}</div>
+    <div style="font-size: 1.8rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.2rem;">
+        {avg_time:.3f} ms
+    </div>
+    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">
+        ⏱️ Avg Time &nbsp;|&nbsp; <span style="opacity: 0.8;">Std Dev: {std_time:.3f} ms</span>
+    </div>
+    <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 0.5rem;">
+        <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; 
+                    letter-spacing: 0.5px; margin-bottom: 0.3rem;">🎯 Avg MSE</div>
+        <div style="font-size: 1.5rem; font-weight: 600; color: {acc_color};">{avg_mse:.2e}</div>
+        <div style="font-size: 0.75rem; color: var(--text-secondary);">Std Dev: {std_mse:.2e}</div>
+    </div>
+    <div style="margin-top: 0.8rem; padding: 0.5rem; background: {acc_color}22; 
+                border-radius: 6px; text-align: center;">
+        <span style="color: {acc_color}; font-weight: 600; font-size: 0.85rem;">Rating: {acc_label}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+        
+        # Detailed comparison table
+        st.markdown("---")
+        st.markdown("### 📋 Summary Table")
+        
+        summary_data = []
+        for solver_name in all_solvers:
+            times = global_results[solver_name]['times']
+            mses = global_results[solver_name]['mses']
+            
+            if times and mses:
+                summary_data.append({
+                    "Solver": solver_name,
+                    "dt": str(g_dt) if solver_name != "PINN" else "N/A",
+                    "Avg Time (ms)": f"{np.mean(times)*1000:.4f}",
+                    "Std Time (ms)": f"{np.std(times)*1000:.4f}",
+                    "Avg MSE": f"{np.mean(mses):.2e}",
+                    "Std MSE": f"{np.std(mses):.2e}",
+                    "Min MSE": f"{np.min(mses):.2e}",
+                    "Max MSE": f"{np.max(mses):.2e}",
+                    "Rating": get_accuracy_label(np.mean(mses))
+                })
+        
+        df_summary = pd.DataFrame(summary_data)
+        st.dataframe(df_summary, hide_index=True)
+        
+        # Visualizations
+        st.markdown("---")
+        st.markdown("### 📊 Performance Visualizations")
+        
+        viz_tab1, viz_tab2, viz_tab3 = st.tabs(["📊 MSE Distribution", "⏱️ Time Distribution", "📈 MSE vs Time"])
+        
+        with viz_tab1:
+            theme = get_plot_theme()
+            fig, ax = plt.subplots(figsize=(12, 6))
+            fig.patch.set_facecolor(theme["bg_primary"])
+            ax.set_facecolor(theme["bg_secondary"])
+            ax.tick_params(colors=theme["text_secondary"])
+            for spine in ax.spines.values():
+                spine.set_color(theme["border_color"])
+            ax.xaxis.label.set_color(theme["text_color"])
+            ax.yaxis.label.set_color(theme["text_color"])
+            ax.title.set_color(theme["text_color"])
+            
+            # Box plot of MSE for each solver
+            mse_data = [global_results[s]['mses'] for s in all_solvers]
+            bp = ax.boxplot(mse_data, tick_labels=all_solvers, patch_artist=True)
+            
+            for patch, solver in zip(bp['boxes'], all_solvers):
+                patch.set_facecolor(SOLVER_COLORS[solver])
+                patch.set_alpha(0.7)
+            
+            # Style outliers (fliers) to be visible on dark background
+            for flier in bp['fliers']:
+                flier.set(marker='o', markerfacecolor='white', markeredgecolor='white', alpha=0.7)
+            
+            # Style whiskers and caps to be visible
+            for whisker in bp['whiskers']:
+                whisker.set(color=theme["text_secondary"], linewidth=1.5)
+            for cap in bp['caps']:
+                cap.set(color=theme["text_secondary"], linewidth=1.5)
+            for median in bp['medians']:
+                median.set(color='#ffaa00', linewidth=2)
+            
+            ax.set_ylabel('MSE', fontsize=12)
+            ax.set_title('MSE Distribution by Solver', fontsize=14, fontweight='bold')
+            ax.set_yscale('log')
+            ax.grid(True, alpha=0.3, color=theme["grid_color"])
             
             plt.tight_layout()
             st.pyplot(fig)
             plt.close()
         
-        with tab3:
-            # Phase portrait
+        with viz_tab2:
+            theme = get_plot_theme()
+            fig, ax = plt.subplots(figsize=(12, 6))
+            fig.patch.set_facecolor(theme["bg_primary"])
+            ax.set_facecolor(theme["bg_secondary"])
+            ax.tick_params(colors=theme["text_secondary"])
+            for spine in ax.spines.values():
+                spine.set_color(theme["border_color"])
+            ax.xaxis.label.set_color(theme["text_color"])
+            ax.yaxis.label.set_color(theme["text_color"])
+            ax.title.set_color(theme["text_color"])
+            
+            # Bar plot of average time
+            avg_times = [np.mean(global_results[s]['times'])*1000 for s in all_solvers]
+            std_times = [np.std(global_results[s]['times'])*1000 for s in all_solvers]
+            colors = [SOLVER_COLORS[s] for s in all_solvers]
+            
+            bars = ax.bar(all_solvers, avg_times, yerr=std_times, capsize=5, color=colors, alpha=0.8,
+                         error_kw={'ecolor': 'white', 'capthick': 2, 'elinewidth': 1.5})
+            
+            ax.set_ylabel('Time (ms)', fontsize=12)
+            ax.set_title('Average Computation Time by Solver', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3, color=theme["grid_color"], axis='y')
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+        
+        with viz_tab3:
             theme = get_plot_theme()
             fig, ax = plt.subplots(figsize=(10, 8))
             fig.patch.set_facecolor(theme["bg_primary"])
@@ -738,138 +1212,138 @@ if len(selected_solvers) >= 2:
             ax.xaxis.label.set_color(theme["text_color"])
             ax.yaxis.label.set_color(theme["text_color"])
             ax.title.set_color(theme["text_color"])
+            
+            # Scatter plot: avg time vs avg MSE
+            for solver in all_solvers:
+                avg_time = np.mean(global_results[solver]['times']) * 1000
+                avg_mse = np.mean(global_results[solver]['mses'])
+                ax.scatter(avg_time, avg_mse, s=200, c=SOLVER_COLORS[solver], 
+                          label=solver, edgecolors='white', linewidth=2, alpha=0.9)
+            
+            ax.set_xlabel('Average Time (ms)', fontsize=12)
+            ax.set_ylabel('Average MSE', fontsize=12)
+            ax.set_title('Speed vs Accuracy Trade-off', fontsize=14, fontweight='bold')
+            ax.set_yscale('log')
+            ax.legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"])
             ax.grid(True, alpha=0.3, color=theme["grid_color"])
-            
-            # Plot ground truth
-            ax.plot(ground_truth['x'], ground_truth['y'], 
-                   color=SOLVER_COLORS['Ground Truth'], 
-                   linewidth=3, label='Ground Truth', alpha=0.4)
-            
-            # Plot each solver
-            for result in results:
-                ax.plot(result['x'], result['y'], 
-                       color=SOLVER_COLORS[result['name']], 
-                       linestyle=SOLVER_STYLES[result['name']],
-                       linewidth=2, 
-                       label=result['name'],
-                       alpha=0.9)
-                ax.plot(result['x'][0], result['y'][0], 'o', 
-                       color=SOLVER_COLORS[result['name']], 
-                       markersize=10)
-            
-            ax.set_xlabel('x', fontsize=12)
-            ax.set_ylabel('y', fontsize=12)
-            ax.set_title('Phase Portrait (x vs y)', fontsize=14, fontweight='bold')
-            ax.legend(facecolor=theme["legend_bg"], edgecolor=theme["border_color"], labelcolor=theme["text_color"], loc='best')
             
             plt.tight_layout()
             st.pyplot(fig)
             plt.close()
-        
-        # DETAILED COMPARISON TABLE
+    
+        # DETAILED RESULTS & EXPORT
         st.markdown("---")
-        st.markdown("## 📊 Detailed Comparison Table")
+        st.markdown("## 📥 Export Results")
         
-        comparison_data = []
-        for result in results:
-            # Convert all values to strings for consistent DataFrame serialization
+        # Create detailed dataframe with all individual run data
+        detailed_data = []
+        for i, params in enumerate(param_sets):
             row = {
-                "Solver": str(result['name']),
-                "dt": str(result['dt']) if result['dt'] is not None else "-",
-                "Steps": str(f"{result['n_steps']:,}") if result['n_steps'] is not None else "-",
-                "Total Time (ms)": str(f"{result['total_time']*1000:.4f}"),
-                "Time/Step (μs)": str(f"{result['time_per_step']*1e6:.3f}") if result['time_per_step'] is not None else "-",
-                "MSE (total)": str(f"{result['accuracy']['mse_total']:.2e}"),
-                "MSE (x)": str(f"{result['accuracy']['mse_x']:.2e}"),
-                "MSE (y)": str(f"{result['accuracy']['mse_y']:.2e}"),
-                "RMSE": str(f"{result['accuracy']['rmse_total']:.2e}"),
-                "Accuracy": str(get_accuracy_label(result['accuracy']['mse_total']))
+                "Run #": i + 1,
+                "A": f"{params['A']:.4f}",
+                "B": f"{params['B']:.4f}",
+                "x₀": f"{params['x0']:.4f}",
+                "y₀": f"{params['y0']:.4f}",
             }
-            comparison_data.append(row)
+            # Add results for each solver
+            for solver_name in all_solvers:
+                times = global_results[solver_name]['times']
+                mses = global_results[solver_name]['mses']
+                if i < len(times) and i < len(mses):
+                    row[f"{solver_name} Time (ms)"] = f"{times[i]*1000:.4f}"
+                    row[f"{solver_name} MSE"] = f"{mses[i]:.2e}"
+            detailed_data.append(row)
         
-        df = pd.DataFrame(comparison_data)
-        st.dataframe(df, hide_index=True)
+        df_detailed = pd.DataFrame(detailed_data)
         
-        # PARAMETER SUMMARY
+        # Show detailed results in expandable section
+        with st.expander("📋 View All Individual Run Results", expanded=False):
+            st.dataframe(df_detailed, hide_index=True, width='stretch')
+        
+        # Create Excel file with multiple sheets
+        import io
+        
+        # Create a BytesIO buffer
+        buffer = io.BytesIO()
+        
+        # Create Excel writer
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            # Sheet 1: Summary Statistics
+            df_summary.to_excel(writer, sheet_name='Summary Statistics', index=False)
+            
+            # Sheet 2: Detailed Run Results
+            df_detailed.to_excel(writer, sheet_name='Individual Runs', index=False)
+            
+            # Sheet 3: Configuration
+            config_data = pd.DataFrame([{
+                "Number of Parameter Sets": n_sets,
+                "Time Step (dt)": g_dt,
+                "Ground Truth": "RK4 @ dt=0.001",
+                "Parameter A Range": "0.5 - 2.5",
+                "Parameter B Range": "1.0 - 6.0",
+                "Initial x₀ Range": "0.0 - 3.0",
+                "Initial y₀ Range": "0.0 - 3.0",
+                "Time Range": "0 - 20 seconds"
+            }])
+            config_data.to_excel(writer, sheet_name='Configuration', index=False)
+        
+        # Get the Excel data
+        excel_data = buffer.getvalue()
+        
+        # Download button
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.download_button(
+                label="📥 Download Excel Report",
+                data=excel_data,
+                file_name=f"brusselator_global_comparison_{n_sets}_sets.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                width='stretch'
+            )
+        
+        # Parameter summary section
         st.markdown("---")
+        st.markdown("## 📌 Comparison Settings Summary")
+        
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("### 📌 Model Parameters")
-            st.markdown(f"- **A** = {params['A']}")
-            st.markdown(f"- **B** = {params['B']}")
-            st.markdown(f"- **x₀** = {params['x0']}")
-            st.markdown(f"- **y₀** = {params['y0']}")
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Dataset Size</div>
+                <div class="metric-value">{n_sets}</div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">Parameter Sets</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col2:
-            st.markdown("### ⚙️ Simulation Settings")
-            st.markdown(f"- **Time Range:** 0 - {T} s")
-            st.markdown(f"- **Ground Truth dt:** {GROUND_TRUTH_DT}")
-            st.markdown(f"- **Ground Truth Steps:** {ground_truth['n_steps']:,}")
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Time Step</div>
+                <div class="metric-value">{g_dt}</div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">Numerical Methods</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col3:
-            st.markdown("### 🎛️ Solver Time Steps")
-            for solver, dt in solver_dts.items():
-                if dt is not None:
-                    st.markdown(f"- **{solver}:** dt = {dt}")
-                else:
-                    st.markdown(f"- **{solver}:** N/A (neural net)")
-
-else:
-    st.info("👈 Select at least 2 solvers from the sidebar to begin comparison")
-    
-    # Show some info about the solvers
-    st.markdown("---")
-    st.markdown("## 📚 Available Solvers")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        ### 🔢 Traditional Numerical Methods
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">Ground Truth</div>
+                <div class="metric-value">RK4</div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">dt = 0.001</div>
+            </div>
+            """, unsafe_allow_html=True)
         
-        **Euler's Method**
-        - First-order accuracy (O(h))
-        - Simplest numerical integrator
-        - Fast but less accurate
-        
-        **Improved Euler (Heun's Method)**
-        - Second-order accuracy (O(h²))
-        - Predictor-corrector approach
-        - Better stability than basic Euler
-        
-        **RK4 (Runge-Kutta 4th Order)**
-        - Fourth-order accuracy (O(h⁴))
-        - Industry standard for ODEs
-        - Excellent balance of speed and accuracy
-        """)
-    
-    with col2:
-        st.markdown("""
-        ### 🧠 Machine Learning Method
-        
-        **PINN (Physics-Informed Neural Network)**
-        - Neural network trained on Brusselator physics
-        - Learns the solution manifold
-        - Fast inference after training
-        - Handles parameter variations
-        
-        **Model Details:**
-        - 8 hidden layers (128 neurons each)
-        - Inputs: t, A, B, x₀, y₀
-        - Outputs: x(t), y(t)
-        """)
-    
-    st.markdown("---")
-    st.markdown("### 🎯 Accuracy Evaluation")
-    st.markdown("""
-    All solvers are compared against a **ground truth** solution computed using **RK4 at dt=0.001**.
-    
-    This provides ~20,000 steps with 4th-order accuracy, giving an essentially exact reference solution.
-    
-    **Accuracy Ratings:**
-    - 🟢 **Excellent**: MSE < 10⁻⁶
-    - 🟡 **Good**: MSE < 10⁻⁴
-    - 🟠 **Moderate**: MSE < 10⁻²
-    - 🔴 **Poor**: MSE ≥ 10⁻²
-    """)
+        # Parameter ranges
+        st.markdown("### 📊 Parameter Ranges Used")
+        range_cols = st.columns(4)
+        ranges = [
+            ("A", "0.5 - 2.5"),
+            ("B", "1.0 - 6.0"),
+            ("x₀", "0.0 - 3.0"),
+            ("y₀", "0.0 - 3.0")
+        ]
+        for col, (param, range_val) in zip(range_cols, ranges):
+            with col:
+                st.markdown(f"**{param}:** {range_val}")
