@@ -1,7 +1,5 @@
-"""
-Brusselator Model Solver Comparison GUI
-A Streamlit application for comparing different numerical solvers
-"""
+# Brusselator Model Solver Comparison GUI
+# A Streamlit application for comparing different numerical solvers
 
 import streamlit as st
 import numpy as np
@@ -29,9 +27,7 @@ from RK4.RK4 import brusselator_rk4 as rk4_solve
 # Import PINN solver
 from PINN.pinn_model import BrusselatorPINNSolver
 
-# ============================================================================
 # PAGE CONFIGURATION
-# ============================================================================
 st.set_page_config(
     page_title="Brusselator Solver Comparison",
     page_icon="🧪",
@@ -39,9 +35,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ============================================================================
 # CUSTOM STYLING - Light/Dark Mode Compatible
-# ============================================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
@@ -197,9 +191,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================================
 # THEME DETECTION FOR MATPLOTLIB
-# ============================================================================
 def get_plot_theme():
     """Detect theme and return appropriate plot colors"""
     # Try to detect Streamlit theme from config
@@ -233,9 +225,7 @@ def get_plot_theme():
 
 PLOT_THEME = get_plot_theme()
 
-# ============================================================================
 # HEADER
-# ============================================================================
 st.markdown('<h1 class="main-header">🧪 Brusselator Solver Comparison</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Compare numerical methods for the Brusselator reaction-diffusion system</p>', unsafe_allow_html=True)
 
@@ -247,9 +237,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ============================================================================
 # SIDEBAR - PARAMETERS AND SOLVER SELECTION
-# ============================================================================
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     
@@ -316,9 +304,7 @@ with st.sidebar:
     st.markdown("**Time Range:** 0 - 20 seconds")
     st.markdown("**Ground Truth:** RK4 @ dt=0.001")
 
-# ============================================================================
 # CONSTANTS AND HELPER FUNCTIONS
-# ============================================================================
 T = 20.0  # Fixed time range
 GROUND_TRUTH_DT = 0.001  # High accuracy reference
 
@@ -476,9 +462,7 @@ def get_accuracy_label(mse):
     else:
         return "Poor"
 
-# ============================================================================
 # MAIN CONTENT
-# ============================================================================
 if len(selected_solvers) >= 2:
     
     st.markdown("---")
@@ -575,9 +559,7 @@ if len(selected_solvers) >= 2:
         params = st.session_state['params']
         solver_dts = st.session_state['solver_dts']
         
-        # ================================================================
         # PERFORMANCE METRICS
-        # ================================================================
         st.markdown("## ⏱️ Performance Metrics")
         
         cols = st.columns(len(results))
@@ -602,9 +584,7 @@ if len(selected_solvers) >= 2:
                     st.markdown("**Method:** Neural Network")
                     st.markdown("**Points:** 1,000")
         
-        # ================================================================
         # ACCURACY METRICS
-        # ================================================================
         st.markdown("---")
         st.markdown("## 🎯 Accuracy Metrics")
         st.markdown(f"*Compared against ground truth: RK4 @ dt={GROUND_TRUTH_DT} ({ground_truth['n_steps']:,} steps)*")
@@ -630,9 +610,7 @@ if len(selected_solvers) >= 2:
                 st.markdown(f"**MSE (y):** {acc['mse_y']:.2e}")
                 st.markdown(f"**RMSE:** {acc['rmse_total']:.2e}")
         
-        # ================================================================
         # SOLUTION COMPARISON WITH GROUND TRUTH
-        # ================================================================
         st.markdown("---")
         st.markdown("## 📈 Solution Comparison")
         
@@ -788,9 +766,7 @@ if len(selected_solvers) >= 2:
             st.pyplot(fig)
             plt.close()
         
-        # ================================================================
         # DETAILED COMPARISON TABLE
-        # ================================================================
         st.markdown("---")
         st.markdown("## 📊 Detailed Comparison Table")
         
@@ -814,9 +790,7 @@ if len(selected_solvers) >= 2:
         df = pd.DataFrame(comparison_data)
         st.dataframe(df, hide_index=True)
         
-        # ================================================================
         # PARAMETER SUMMARY
-        # ================================================================
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
         
