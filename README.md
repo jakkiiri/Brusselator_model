@@ -1,6 +1,7 @@
 This branch explores the method of the Physics Informed Neural Network in solving the Brusselator Model.
 
-Detailed documentation on model architecture and training methods of the final iteration are in the Documentation File. 
+Detailed documentation on model architecture and training methods of the final iteration are in the Documentation File.
+Final training results, including loss history, training summary (epochs and loss data), and training/validation examples are in the training_results/pinn_ouputs folder
 The old_scripts folder include loose scripts used for sanity testing and experimental exploration of the PINN on local computer. 
 The findings from the old scripts folder only aided in the development and research of the final model and are not discussed explicitly in the report.
 
