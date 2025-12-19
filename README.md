@@ -2,6 +2,7 @@ This branch implements a simple gui in streamlit used to aid in timing and compu
 
 To access the GUI on the Streamlit APP online, please access the following URL:
 brusselator.streamlit.app
+
 It may take a while for the Streamlit APP to load, please be patient.
 
 To run the streamlit app GUI locally, please do as the following in your terminal.
