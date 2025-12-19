@@ -15,8 +15,9 @@ git push origin --delete feature/benchmarking
 
 Or via GitHub CLI:
 ```bash
-gh api -X DELETE /repos/jakkiiri/Brusselator_model/git/refs/heads/feature/benchmarking
+gh api -X DELETE /repos/{owner}/{repo}/git/refs/heads/feature/benchmarking
 ```
+Replace `{owner}` with the repository owner and `{repo}` with the repository name.
 
 ## Verification
 After deletion, verify with:
